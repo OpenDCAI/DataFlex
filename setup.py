@@ -18,14 +18,6 @@ import re
 from setuptools import find_packages, setup
 
 
-# def get_version() -> str:
-#     with open(os.path.join("src", "llamafactory", "extras", "env.py"), encoding="utf-8") as f:
-#         file_content = f.read()
-#         pattern = r"{}\W*=\W*\"([^\"]+)\"".format("VERSION")
-#         (version,) = re.findall(pattern, file_content)
-#         return version
-
-
 def get_requires() -> list[str]:
     with open("requirements.txt", encoding="utf-8") as f:
         file_content = f.read()
