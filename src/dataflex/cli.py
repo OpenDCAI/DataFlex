@@ -68,7 +68,7 @@ def main():
     from llamafactory.train.tuner import run_exp
     from llamafactory.extras.misc import is_env_enabled, get_device_count, use_ray
     from llamafactory.extras import logging
-    from llamafactory import launcher
+    from dataflex import launcher
 
 
     logger = logging.get_logger(__name__)
