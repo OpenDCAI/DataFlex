@@ -135,7 +135,6 @@ from transformers.utils import (
     is_torch_xla_available,
     is_torch_xpu_available,
     is_torchao_available,
-    logging,
     strtobool,
 )
 
@@ -160,8 +159,13 @@ if TYPE_CHECKING:
 
     from llamafactory.hparams import FinetuningArguments
 
+import logging
+import sys
+logging.basicConfig(level=logging.INFO)
+handler = logging.StreamHandler(sys.stdout)
+logger = logging.getLogger(__name__)
+logger.addHandler(handler)
 
-logger = logging.get_logger(__name__)
 
 if is_peft_available():
     from peft import PeftModel
@@ -238,7 +242,7 @@ class DynamicTrainer(CustomSeq2SeqTrainer):
         # 初始化父类
         super().__init__(finetuning_args=finetuning_args, processor=processor, gen_kwargs=gen_kwargs, **kwargs)
         self.dynamic_selector = DynamicSelector(dataset=self.train_dataset, accelerator=self.accelerator, data_collator=self.data_collator)
-        print("DynamicTrainer initialized")
+        logger.info("[DynamicTrain] DynamicTrainer initialized")
 
     @override
     def _get_train_sampler(self, train_dataset) -> Optional[torch.utils.data.Sampler]:
@@ -338,6 +342,7 @@ class DynamicTrainer(CustomSeq2SeqTrainer):
         # number of training steps per epoch: num_update_steps_per_epoch
         # total number of training steps to execute: max_steps
         # _train_batch_size = micro batch size
+        # 这个是global batch size
         total_train_batch_size = self._train_batch_size * args.gradient_accumulation_steps * args.world_size
 
         if self.finetuning_args.enable_dynamic_train:
@@ -350,7 +355,6 @@ class DynamicTrainer(CustomSeq2SeqTrainer):
             train_dataloader = self.get_train_dataloader()
         if self.is_fsdp_xla_v2_enabled:
             train_dataloader = tpu_spmd_dataloader(train_dataloader)
-
         (
             num_train_epochs,
             num_update_steps_per_epoch, # 等于len_dataloader // acc (或len(dataset)/worldsize/microbatchsize/acc)
@@ -753,7 +757,7 @@ class DynamicTrainer(CustomSeq2SeqTrainer):
                             current_iterator = iter(train_loader)
 
                             if self.accelerator.is_main_process:
-                                print(f"[DynamicTrain] Updated dataloader at step {self.state.global_step}, {len(new_indices)} samples in total.")
+                                logger.info(f"[DynamicTrain] Updated dataloader at step {self.state.global_step}, {len(new_indices)} samples in total.")
 
 
                     else:

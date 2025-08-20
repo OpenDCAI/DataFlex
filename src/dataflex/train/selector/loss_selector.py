@@ -3,11 +3,15 @@ from typing import List
 import torch.distributed as dist
 from tqdm import tqdm
 from torch.utils.data import DataLoader
-from llamafactory.extras import logging
 import json
 import os
 
-logger = logging.get_logger(__name__)
+import logging
+import sys
+logging.basicConfig(level=logging.INFO)
+handler = logging.StreamHandler(sys.stdout)
+logger = logging.getLogger(__name__)
+logger.addHandler(handler)
 
 class DynamicSelector:
     def __init__(self, dataset, accelerator, data_collator):
@@ -65,7 +69,7 @@ class DynamicSelector:
             # 1) 构造 DataLoader
             dataloader = DataLoader(
                 self.dataset,
-                batch_size=4,
+                batch_size=1,
                 shuffle=False,
                 num_workers=2,
                 collate_fn=self.data_collator,
@@ -114,6 +118,3 @@ class DynamicSelector:
             sel = sel or []
 
         return sel
-
-
-

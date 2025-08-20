@@ -53,7 +53,8 @@ ddp_timeout: 180000000
 ### dynamic_train
 enable_dynamic_train: true
 warmup_step: 4
-update_step: 4
+update_step: 3
+update_times: 2
 ## eval
 # val_size: 0.001
 # per_device_eval_batch_size: 1
