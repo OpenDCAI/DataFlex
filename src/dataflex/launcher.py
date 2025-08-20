@@ -1,4 +1,5 @@
 import sys
+import importlib
 from llamafactory.train.tuner import run_exp  # use absolute import
 
 def uncache(exclude):
@@ -44,8 +45,20 @@ def launch():
 
     # do some hack
     from dataflex.train.trainer.dynamic_trainer import DynamicTrainer
-    import llamafactory.train.sft.trainer
-    llamafactory.train.sft.trainer.CustomSeq2SeqTrainer = DynamicTrainer
+    # do some hack
+    from dataflex.train.trainer.dynamic_trainer import DynamicTrainer
+    # import llamafactory.train.sft.trainer
+    # 1) 先确保源头也改了（以防别的地方用到）
+    tmod = importlib.import_module("llamafactory.train.sft.trainer")
+    tmod.CustomSeq2SeqTrainer = DynamicTrainer
+
+    # 2) 覆盖包层 re-export
+    sft_pkg = importlib.import_module("llamafactory.train.sft")
+    setattr(sft_pkg, "CustomSeq2SeqTrainer", DynamicTrainer)
+
+    # 3) 给 workflow 模块的全局把同名符号也替换掉
+    wflow = importlib.import_module("llamafactory.train.sft.workflow")
+    setattr(wflow, "CustomSeq2SeqTrainer", DynamicTrainer)   # 名字必须与它 `from .trainer import ...` 的名字一致
 
 
 

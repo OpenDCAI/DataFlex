@@ -238,6 +238,7 @@ class DynamicTrainer(CustomSeq2SeqTrainer):
         # 初始化父类
         super().__init__(finetuning_args=finetuning_args, processor=processor, gen_kwargs=gen_kwargs, **kwargs)
         self.dynamic_selector = DynamicSelector(dataset=self.train_dataset, accelerator=self.accelerator, data_collator=self.data_collator)
+        print("DynamicTrainer initialized")
 
     @override
     def _get_train_sampler(self, train_dataset) -> Optional[torch.utils.data.Sampler]:
@@ -487,7 +488,7 @@ class DynamicTrainer(CustomSeq2SeqTrainer):
         # FSDP(Transformers Model), Dynamo Optimized Module(Transformers Model) etc.
 
         # Train!
-        logger.info("***** Running training *****")
+        logger.info("***** Dynamic Running training *****")
         logger.info(f"  Num examples = {num_examples:,}")
         logger.info(f"  Num Epochs = {num_train_epochs:,}")
         logger.info(f"  Instantaneous batch size per device = {self.args.per_device_train_batch_size:,}")
@@ -726,7 +727,7 @@ class DynamicTrainer(CustomSeq2SeqTrainer):
                             epoch,
                             ignore_keys_for_eval,
                             start_time,
-                            learning_rate=learning_rate,
+                            # learning_rate=learning_rate,
                         )
 
                         # 动态训练更新
@@ -780,7 +781,7 @@ class DynamicTrainer(CustomSeq2SeqTrainer):
 
             self.control = self.callback_handler.on_epoch_end(args, self.state, self.control)
             self._maybe_log_save_evaluate(
-                tr_loss, grad_norm, model, trial, epoch, ignore_keys_for_eval, start_time, learning_rate=learning_rate
+                tr_loss, grad_norm, model, trial, epoch, ignore_keys_for_eval, start_time
             )
 
             if DebugOption.TPU_METRICS_DEBUG in self.args.debug:
