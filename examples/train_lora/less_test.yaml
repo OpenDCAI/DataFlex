@@ -1,0 +1,66 @@
+### model
+model_name_or_path: /data/malu/Qwen2.5-0.5B-Instruct
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_target: all
+lora_rank: 16
+lora_alpha: 8
+# deepspeed: examples/deepspeed/ds_z3_config.json  # choices: [ds_z0_config.json, ds_z2_config.json, ds_z3_config.json]
+
+### dataset
+dataset: alpaca_en_demo
+template: qwen
+cutoff_len: 4096
+# max_samples: 100000000
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 0
+# disable_shuffling: true
+seed: 42
+
+### output
+output_dir: /data/malu/DataFlex-Preview/saves/test
+logging_steps: 10
+save_steps: 100
+plot_loss: true
+save_only_model: false
+overwrite_output_dir: true
+
+### swanlab
+report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
+# use_swanlab: true
+# swanlab_project: medical_dynamic_sft
+# swanlab_run_name: qwen2_5_3b_lora_medical_50k_baseline
+# swanlab_workspace: word2li
+# swanlab_api_key: AnLWTMijcbd4cyEfundi3
+# swanlab_lark_webhook_url: https://open.feishu.cn/open-apis/bot/v2/hook/ff10a391-4e51-4481-97ff-965760cae2a1
+# swanlab_lark_secret: cySzwTbCJh08349FGAhBSf
+
+### train
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 16
+learning_rate: 1.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+
+### dynamic_train
+enable_dynamic_train: true
+warmup_step: 4
+update_step: 3
+update_times: 2
+dynamic_selector: less
+
+eval_dataset: alpaca_zh_demo
+
+## eval
+# val_size: 0.001
+# per_device_eval_batch_size: 1
+# eval_strategy: steps
+# eval_steps: 1000

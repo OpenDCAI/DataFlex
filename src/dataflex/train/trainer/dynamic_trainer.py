@@ -241,7 +241,11 @@ class DynamicTrainer(CustomSeq2SeqTrainer):
     def __init__(self, finetuning_args, processor=None, gen_kwargs=None, **kwargs):
         # 初始化父类
         super().__init__(finetuning_args=finetuning_args, processor=processor, gen_kwargs=gen_kwargs, **kwargs)
-        self.dynamic_selector = DynamicSelector(dataset=self.train_dataset, accelerator=self.accelerator, data_collator=self.data_collator)
+        if finetuning_args.dynamic_selector == "less":
+            from ..selector.less_selector import LessSelector
+            self.dynamic_selector = LessSelector(dataset=self.train_dataset, eval_dataset=self.eval_dataset, accelerator=self.accelerator, data_collator=self.data_collator)
+        else:
+            self.dynamic_selector = DynamicSelector(dataset=self.train_dataset, accelerator=self.accelerator, data_collator=self.data_collator)
         logger.info("[DynamicTrain] DynamicTrainer initialized")
 
     @override
@@ -747,11 +751,21 @@ class DynamicTrainer(CustomSeq2SeqTrainer):
 
                             update_times = (self.state.global_step - self.finetuning_args.warmup_step) // self.finetuning_args.update_step + 1
                             logger.info(f"[DynamicTrain] Model training paused, starting the {update_times}th dynamic data selection...")
-                            new_indices = self.dynamic_selector.select(
-                                model=model,
-                                step_id=self.state.global_step,
-                                num_samples=total_train_batch_size * self.finetuning_args.update_step
-                            )
+                            if self.finetuning_args.dynamic_selector == "less":
+                                new_indices = self.dynamic_selector.select(
+                                    model=model,
+                                    step_id=self.state.global_step,
+                                    num_samples=total_train_batch_size * self.finetuning_args.update_step,
+                                    optimizer_state=self.optimizer.state,
+                                )
+                            else:
+                                new_indices = self.dynamic_selector.select(
+                                    model=model,
+                                    step_id=self.state.global_step,
+                                    num_samples=total_train_batch_size * self.finetuning_args.update_step
+                                )
+
+
                             # 每个进程根据 local_indices 构造 dataloader
                             train_loader = self.get_train_dataloader(indices=new_indices)
                             current_iterator = iter(train_loader)
