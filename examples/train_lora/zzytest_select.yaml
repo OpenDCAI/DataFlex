@@ -50,13 +50,8 @@ warmup_ratio: 0.1
 bf16: true
 ddp_timeout: 180000000
 
-### dynamic_train
-enable_dynamic_train: true
+### Dataflex args
+train_type: dynamic_select   # 选择 trainer 类型
 warmup_step: 4
 update_step: 3
 update_times: 2
-## eval
-# val_size: 0.001
-# per_device_eval_batch_size: 1
-# eval_strategy: steps
-# eval_steps: 1000

@@ -13,7 +13,7 @@ handler = logging.StreamHandler(sys.stdout)
 logger = logging.getLogger(__name__)
 logger.addHandler(handler)
 
-class DynamicSelector:
+class LossSelector:
     def __init__(self, dataset, accelerator, data_collator):
         self.dataset = dataset
         self.accelerator = accelerator
@@ -61,7 +61,7 @@ class DynamicSelector:
             if self.accelerator.is_main_process:
                 with open(save_path, "r") as f:
                     saved = json.load(f)
-                logger.info(f"[DynamicTrain] Loss exists, loaded from {save_path}")
+                logger.info(f"[Dataflex] Loss exists, loaded from {save_path}")
                 gathered_losses = torch.tensor(saved["losses"])
             else:
                 gathered_losses = None
@@ -77,7 +77,7 @@ class DynamicSelector:
             dataloader = self.accelerator.prepare(dataloader)
 
             # 2) 收集 loss
-            logger.info(f"[DynamicTrain] Calculating loss using {self.accelerator.num_processes} GPUs")
+            logger.info(f"[Dataflex] Calculating loss using {self.accelerator.num_processes} GPUs")
             local_losses = []
             for batch in tqdm(
                 dataloader,
@@ -96,7 +96,7 @@ class DynamicSelector:
             if self.accelerator.is_main_process:
                 with open(save_path, "w") as f:
                     json.dump({"losses": gathered_losses.cpu().tolist()}, f)
-                logger.info(f"[DynamicTrain] Loss calculation finished, saved to {save_path}")
+                logger.info(f"[Dataflex] Loss calculation finished, saved to {save_path}")
 
         # ========== 所有进程都广播 gathered_losses ==========
         gathered_list = [gathered_losses if self.accelerator.is_main_process else None]

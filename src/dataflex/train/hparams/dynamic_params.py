@@ -513,9 +513,16 @@ class DynamicFinetuningArguments(
         default=False,
         metadata={"help": "Whether or not to compute effective tokens per second."},
     )
-    enable_dynamic_train: bool = field(
-        default=False,
-        metadata={"help": "Whether or not to enable dynamic train."},
+    # 动态训练的参数
+    train_type: str = field(
+        default="static",
+        metadata={
+            "help": (
+                "Specifies the type of training to use when `enable_dynamic_train` is True. "
+                "Choices: ['static', 'dynamic_select', 'dynamic_mix', 'dynamic_weighting']. "
+                "If static, uses default LlamaFactory trainer."
+            )
+        }
     )
     warmup_step: int = field(
         default=0,
