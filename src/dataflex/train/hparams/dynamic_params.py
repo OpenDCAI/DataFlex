@@ -524,6 +524,10 @@ class DynamicFinetuningArguments(
             )
         }
     )
+    dynamic_selector: str = field(
+        default="loss",
+        metadata={"help": "The selector for dynamic training."},
+    )
     warmup_step: int = field(
         default=0,
         metadata={"help": "Warm up steps for dynamic training"},

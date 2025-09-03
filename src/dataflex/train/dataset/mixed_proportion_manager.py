@@ -28,7 +28,6 @@ class MixedProportionManager:
         per_source: Dict[str, HFDataset],
         sample_rule: str = "mixture",
         proportions: Optional[List[float]] = None,
-        default_total: Optional[int] = None,
         seed: int = 42,
         slice_list: Optional[List[str]] = None,
         logger=None,
@@ -47,7 +46,6 @@ class MixedProportionManager:
         self._seed = seed
         self.rng = np.random.default_rng(seed)
         self.sizes = {k: len(v) for k, v in self.sources.items()}
-        self.default_total = default_total
         self.set_proportions(proportions)
 
     def set_proportions(self, proportions: Optional[List[float]]):
@@ -104,9 +102,6 @@ class MixedProportionManager:
             self.rng = np.random.default_rng(self._seed)
 
         sizes = np.array([self.sizes[n] for n in self.names], dtype=int)
-        
-        if num_samples is None:
-            num_samples = int(self.default_total if self.default_total is not None else sizes.sum())
         
         # 按比例计算每个数据源的数量
         n_per = np.floor(num_samples * self.probs).astype(int)

@@ -126,7 +126,8 @@ def launch():
     cfg = read_args()
     patch_finetune_params()
     patch_trainer(cfg['train_type'] if 'train_type' in cfg else 'static')
-    patch_get_dataset()
+    if cfg['train_type'] == 'dynamic_mix':
+        patch_get_dataset()
 
     from llamafactory.train.tuner import run_exp
     run_exp()
