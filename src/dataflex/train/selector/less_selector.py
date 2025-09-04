@@ -169,6 +169,8 @@ class LessSelector:
             proj_dim=self.proj_dim,
             seed=self.seed,
             proj_type=ProjectionType.rademacher,
+            max_batch_size=8,
+            block_size=128,
             device=self.device,
             dtype=self.dtype,
         )
@@ -193,7 +195,7 @@ class LessSelector:
         dataloader = self.accelerator.prepare(dataloader)
 
         # 4) 设置保存和投影的间隔
-        project_interval = 32  # 每处理32个样本投影一次
+        project_interval = 8  # 每处理32个样本投影一次
         save_interval = 320    # 每处理320个样本（10次投影）保存一次
 
         # 5) 断点续传
