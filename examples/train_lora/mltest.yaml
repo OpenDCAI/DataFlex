@@ -52,8 +52,9 @@ ddp_timeout: 180000000
 
 ### dynamic_train
 train_type: dynamic_select
+dynamic_selector: less
 warmup_step: 4
-update_step: 3
+update_step: 10
 update_times: 2
 ## eval
 # val_size: 0.001

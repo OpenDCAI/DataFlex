@@ -3,10 +3,11 @@ from torch.nn.functional import normalize
 from typing import List, Dict, Optional
 import torch.distributed as dist
 from tqdm import tqdm
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from trak.projectors import BasicProjector, CudaProjector, ProjectionType
 import json
 import os
+import glob # 用于文件查找
 
 import logging
 import sys
@@ -15,43 +16,46 @@ handler = logging.StreamHandler(sys.stdout)
 logger = logging.getLogger(__name__)
 logger.addHandler(handler)
 
+# NEW: IndexedDataset Wrapper
+class IndexedDataset(Dataset):
+    """一个包装类，用于在返回样本的同时返回其索引。"""
+    def __init__(self, original_dataset):
+        self.original_dataset = original_dataset
+
+    def __len__(self):
+        return len(self.original_dataset)
+
+    def __getitem__(self, index):
+        return index, self.original_dataset[index]
+
 class LessSelector:
     def __init__(self, 
                  dataset, 
                  eval_dataset,
                  accelerator, 
                  data_collator,
-                 save_dir: str = "/data/malu/DataFlex-Preview/saves/less/",
+                 save_dir,
                  gradient_type: str = "adam",
-                 proj_dim: int = 4096,
+                 proj_dim: int = 8192,
                  seed: int = 42):
         """
         初始化 LessSelector.
-
-        Args:
-            dataset: 完整的数据集.
-            accelerator: Hugging Face Accelerate 的 accelerator 实例.
-            data_collator: 用于 DataLoader 的 data collator.
-            save_dir (str): 用于保存计算出的梯度投影的目录.
-            gradient_type (str, optional): 梯度类型，可选 "adam", "sgd", "sign". 默认为 "adam".
-            proj_dim (int, optional): 梯度投影的目标维度. 默认为 4096.
-            seed (int, optional): 随机种子. 默认为 42.
         """
         self.dataset = dataset
         self.eval_dataset = eval_dataset
         self.accelerator = accelerator
-        self.data_collator = data_collator
+        self.original_data_collator = data_collator
         self.save_dir = save_dir
         self.gradient_type = gradient_type
         self.proj_dim = proj_dim
         self.seed = seed
         
         self.device = self.accelerator.device
-        self.dtype = torch.float16 # 使用 float16 以节省内存
+        self.dtype = torch.float16
 
         os.makedirs(self.save_dir, exist_ok=True)
         logger.info(f"LessSelector initialized. Projected gradients will be saved in {self.save_dir}")
-
+     
     def warmup(self, num_samples: int, replacement: bool) -> List[List[int]]:
         if self.accelerator.is_main_process:
             dataset_size = len(self.dataset)
@@ -89,7 +93,6 @@ class LessSelector:
 
     def _prepare_optimizer_state(self, model, optimizer_state: Dict) -> (torch.Tensor, torch.Tensor):
         """从优化器状态字典中准备 Adam 的一阶和二阶矩估计。"""
-        # DDP 下，optimizer_state 的 key 是 full_param
         avg_list, avg_sq_list = [], []
         for param in model.parameters():
             if param.requires_grad:
@@ -102,7 +105,6 @@ class LessSelector:
 
     def _obtain_gradients(self, model, batch, m: Optional[torch.Tensor] = None, v: Optional[torch.Tensor] = None) -> torch.Tensor:
         """根据指定的类型计算单个样本的梯度向量。"""
-        # 在 no_sync 上下文中计算梯度，因为我们是逐样本处理，不需要 DDP 同步
         with self.accelerator.no_sync(model):
             loss = model(**batch).loss
             self.accelerator.backward(loss)
@@ -129,7 +131,6 @@ class LessSelector:
     def _get_trak_projector(self):
         """获取 TRAK projector，优先使用 CUDA 版本。"""
         try:
-            # 尝试导入和使用 CudaProjector
             import fast_jl
             num_sms = torch.cuda.get_device_properties(self.device.index).multi_processor_count
             fast_jl.project_rademacher_8(torch.zeros(8, 1_000, device=self.device), 512, 0, num_sms)
@@ -143,25 +144,31 @@ class LessSelector:
         return projector
 
     def _get_max_saved_index(self, save_dir) -> int:
-        """获取已保存的 chunk 的最大索引，用于断点续传。"""
+        """
+        MODIFIED: 获取已保存的最大样本数（而不是 chunk 索引），用于断点续传。
+        我们通过查看最后一个文件的文件名来推断。
+        """
         prefix = "grads"
-
         if not os.path.exists(save_dir):
             return -1
+        # We only need to check this on the main process
+        if not self.accelerator.is_main_process:
+            return -1
+            
         files = [f for f in os.listdir(save_dir) if f.startswith(prefix) and f.endswith(".pt")]
         if not files:
             return -1
-        indices = [int(f.split(".")[0].split("-")[1]) for f in files]
+        
+        # 文件名格式: grads-{count}-rank{rank}.pt
+        indices = [int(f.split('.')[0].split('-')[1]) for f in files]
         return max(indices) if indices else -1
 
-    def _collect_and_save_projected_gradients(self, model, save_dir, optimizer_state: Optional[Dict] = None):
+    # MODIFIED: 重写核心逻辑
+    def _collect_and_save_projected_gradients(self, model, save_dir, dataset_to_use, optimizer_state: Optional[Dict] = None):
         """
-        核心函数：在所有 GPU 上计算梯度，然后在主进程上投影并分块保存。
+        核心函数：每个进程独立计算梯度、投影，并保存带有索引的分块文件。
         """
-        if self.accelerator.is_main_process:
-            logger.info(f"Starting gradient collection for {len(self.dataset)} samples.")
-        
-        # 1) 初始化 Projector
+        # 1) 初始化 Projector (每个进程都需要一个)
         num_params = self._get_number_of_params(model)
         projector_class = self._get_trak_projector()
         projector = projector_class(
@@ -181,113 +188,131 @@ class LessSelector:
             if optimizer_state is None:
                 raise ValueError("optimizer_state must be provided for 'adam' gradient type.")
             m, v = self._prepare_optimizer_state(model, optimizer_state)
-            logger.info("Adam optimizer states prepared.")
-
+        
         # 3) 构造 DataLoader
-        # 使用 batch_size=1 确保我们为每个样本计算独立的梯度
+        # NEW: 使用 IndexedDataset 来追踪样本的原始索引
+        indexed_dataset = IndexedDataset(dataset_to_use)
+        
+        # NEW: 定义一个处理索引的 collator
+        def indexed_collator_wrapper(features):
+            indices = [f[0] for f in features]
+            original_data = [f[1] for f in features]
+            collated_batch = self.original_data_collator(original_data)
+            return {'indices': torch.tensor(indices), 'batch': collated_batch}
+
         dataloader = DataLoader(
-            self.dataset,
-            batch_size=1,
+            indexed_dataset,
+            batch_size=1, # 仍然是逐样本计算
             shuffle=False,
             num_workers=2,
-            collate_fn=self.data_collator,
+            collate_fn=indexed_collator_wrapper,
         )
         dataloader = self.accelerator.prepare(dataloader)
 
-        # 4) 设置保存和投影的间隔
-        project_interval = 8  # 每处理32个样本投影一次
-        save_interval = 320    # 每处理320个样本（10次投影）保存一次
+        # 4) 设置保存间隔
+        # MODIFIED: 这是每个进程的本地保存间隔
+        save_interval = 64 # 每个进程每处理save_interval个样本就映射并保存一次
 
         # 5) 断点续传
         max_index = self._get_max_saved_index(save_dir=save_dir)
         start_count = max_index + 1
         if self.accelerator.is_main_process and start_count > 1:
             logger.info(f"Resuming from sample index {start_count}.")
-
-        # 6) 循环计算、收集、投影和保存
-        local_grads_to_project = []
-        projected_grads_to_save = []
         
-        # 使用 enumerate(dataloader, 1) 使 count 从 1 开始
-        for count, batch in enumerate(tqdm(
-            dataloader,
-            desc="[LessSelector] Calculating Gradients",
-            disable=not self.accelerator.is_main_process,
-            dynamic_ncols=True,
-            initial=start_count
-        ), 1):
-            if count < start_count:
-                continue
-
-            # 每个进程计算自己分到的样本的梯度
-            vectorized_grads = self._obtain_gradients(model, batch, m, v)
-            
-            # 收集所有进程的梯度到主进程
-            # gather 操作会阻塞，直到所有进程都到达
-            gathered_grads_list = self.accelerator.gather(vectorized_grads.unsqueeze(0))
-
-            if self.accelerator.is_main_process:
-                # gathered_grads_list 的形状是 (num_processes, 1, grad_dim)
-                # 我们将其合并到待投影列表中
-                local_grads_to_project.append(gathered_grads_list.squeeze(1))
-
-                # 达到投影间隔
-                if count % project_interval == 0 or count == len(dataloader):
-                    if local_grads_to_project:
-                        grads_tensor = torch.cat(local_grads_to_project).to(self.dtype)
-                        projected = projector.project(grads_tensor, model_id=0)
-                        projected_grads_to_save.append(projected.cpu())
-                        local_grads_to_project = []
-
-                # 达到保存间隔
-                if count % save_interval == 0 or count == len(dataloader):
-                    if projected_grads_to_save:
-                        save_tensor = torch.cat(projected_grads_to_save)
-                        save_path = os.path.join(save_dir, f"grads-{count}.pt")
-                        torch.save(save_tensor, save_path)
-                        logger.info(f"Saved {save_tensor.shape[0]} projected gradients to {save_path}")
-                        projected_grads_to_save = []
-        
-        # 等待所有进程完成
+        # 等待主进程完成检查
         self.accelerator.wait_for_everyone()
 
-    def _merge_and_normalize_info(self, save_dir):
-        """合并所有分块的梯度投影文件并进行归一化。"""
+        # 6) 循环计算、投影和保存 (在每个进程上独立进行)
+        local_grads_to_project = []
+        local_indices_to_project = []
+        
+        total_samples_in_loader = len(dataloader)
+        # enumerate(..., 1) 使 batch_idx 从 1 开始
+        for batch_idx, data in enumerate(tqdm(
+            dataloader,
+            desc=f"[Process {self.accelerator.process_index}] Calculating Gradients",
+            disable=not self.accelerator.is_local_main_process, # 主进程打印进度条
+            dynamic_ncols=True,
+            position=self.accelerator.process_index,
+        ), 1):
+            
+            # 断点续传逻辑，这里的 'count' 应该是全局样本索引
+            # DistributedSampler 会自动处理分片，我们只需跳过批次即可
+            # 注意: 简单的跳过可能不精确，但对于重启来说是可接受的
+            # dataloader.sampler.set_epoch(batch_idx) # 如果需要精确重启，可能需要更复杂的sampler状态管理
+            # 这里我们简化处理，假设从头开始或不跳过
+  
+            indices = data['indices']
+            batch = data['batch']
+
+            vectorized_grads = self._obtain_gradients(model, batch, m, v)
+            local_grads_to_project.append(vectorized_grads)
+            local_indices_to_project.append(indices)
+
+            # 达到保存间隔或处理完所有样本
+            if batch_idx % save_interval == 0 or batch_idx == total_samples_in_loader:
+                if local_grads_to_project:
+                    grads_tensor = torch.stack(local_grads_to_project).to(self.dtype)
+                    indices_tensor = torch.cat(local_indices_to_project)
+                    
+                    # 在当前进程上进行投影
+                    projected = projector.project(grads_tensor, model_id=0).cpu()
+
+                    # 保存投影梯度和对应的索引
+                    # 文件名包含 batch_idx 和 rank 以确保唯一性
+                    #  252 to 255     605 to 511 
+                    save_path = os.path.join(save_dir, f"grads-{indices_tensor.max().item()}-rank{self.accelerator.process_index}.pt")
+                    torch.save({'grads': projected, 'indices': indices_tensor.cpu()}, save_path)
+                    
+                    # 清空列表以备下一批
+                    local_grads_to_project = []
+                    local_indices_to_project = []
+        
+        # 等待所有进程完成文件写入
+        self.accelerator.wait_for_everyone()
+
+
+    # MODIFIED: 重写合并逻辑
+    def _merge_and_normalize_info(self, save_dir, total_samples):
+        """
+        在主进程上合并所有分块文件，根据索引重建顺序，然后归一化。
+        """
         if self.accelerator.is_main_process:
             logger.info(f"Merging and normalizing projected gradients from {save_dir}")
-            files = [f for f in os.listdir(save_dir) if f.startswith("grads-") and f.endswith(".pt")]
+            
+            # 使用 glob 查找所有 rank 保存的文件
+            files = glob.glob(os.path.join(save_dir, "grads-*-rank*.pt"))
             if not files:
                 logger.warning("No gradient files found to merge.")
                 return
+
+            # 初始化一个空的张量来存放排序后的数据
+            # total_samples 是原始数据集的大小
+            final_grads = torch.zeros(total_samples, self.proj_dim, dtype=torch.float32)
+
+            for file_path in tqdm(files, desc="Merging files"):
+                chunk = torch.load(file_path, map_location="cpu")
+                grads_chunk = chunk['grads'].to(torch.float32)
+                indices_chunk = chunk['indices']
+                
+                # 使用索引将数据放回正确的位置
+                final_grads[indices_chunk] = grads_chunk
             
-            # 按数字顺序排序
-            files.sort(key=lambda x: int(x.split(".")[0].split("-")[1]))
-            
-            merged_data = []
-            for file in files:
-                data = torch.load(os.path.join(save_dir, file))
-                # 归一化每个样本的投影梯度向量
-                normalized_data = normalize(data.to(torch.float32), dim=1)
-                merged_data.append(normalized_data)
-            
-            merged_data = torch.cat(merged_data, dim=0)
+            # 归一化整个张量
+            normalized_data = normalize(final_grads, dim=1)
             
             output_file = os.path.join(save_dir, "all_projected_grads.pt")
-            torch.save(merged_data, output_file)
-            logger.info(f"Saved merged and normalized gradients (Shape: {merged_data.shape}) to {output_file}")
+            torch.save(normalized_data, output_file)
+            logger.info(f"Saved merged and normalized gradients (Shape: {normalized_data.shape}) to {output_file}")
+            
+            # Optional: 清理分块文件
+            for file_path in files:
+                os.remove(file_path)
+            logger.info(f"Cleaned up temporary chunk files in {save_dir}")
 
     def select(self, model, step_id: int, num_samples: int, optimizer_state: Optional[Dict] = None) -> List[int]:
         """
         选择得分最高的 num_samples 个样本。
-        如果预计算的梯度不存在，则会先进行计算。
-
-        Args:
-            model: 用于计算梯度的模型.
-            num_samples (int): 要选择的样本数量.
-            optimizer_state (Optional[Dict]): Adam 优化器的状态字典，当 gradient_type='adam' 时必须提供.
-
-        Returns:
-            List[int]: 被选中的样本的索引列表.
         """
         now_train_save_dir = os.path.join(self.save_dir, "train", str(step_id))
         now_eval_save_dir = os.path.join(self.save_dir, "eval", str(step_id))
@@ -296,24 +321,24 @@ class LessSelector:
         train_final_grads_path = os.path.join(now_train_save_dir, "all_projected_grads.pt")
         eval_final_grads_path = os.path.join(now_eval_save_dir, "all_projected_grads.pt")
 
-        # 步骤 1: 检查是否存在最终的训练集的梯度文件，如果不存在则计算训练集对应的梯度
+        # 步骤 1: 计算训练集梯度
         if not os.path.exists(train_final_grads_path):
             os.makedirs(now_train_save_dir, exist_ok=True)
-            self._collect_and_save_projected_gradients(model, now_train_save_dir, optimizer_state)
-            self._merge_and_normalize_info(now_train_save_dir)
+            self._collect_and_save_projected_gradients(model, now_train_save_dir, self.dataset, optimizer_state)
+            self._merge_and_normalize_info(now_train_save_dir, len(self.dataset))
         
-        # 确保所有进程都已完成文件写入
         self.accelerator.wait_for_everyone()
 
-        # 步骤 2: 检查是否存在最终的验证集的梯度文件，如果不存在则计算验证集对应的梯度
+        # 步骤 2: 计算验证集梯度
         if not os.path.exists(eval_final_grads_path):
             os.makedirs(now_eval_save_dir, exist_ok=True)
-            self._collect_and_save_projected_gradients(model, now_eval_save_dir, optimizer_state)
-            self._merge_and_normalize_info(now_eval_save_dir)
+            # MODIFIED: 传入 eval_dataset
+            self._collect_and_save_projected_gradients(model, now_eval_save_dir, self.eval_dataset, optimizer_state)
+            self._merge_and_normalize_info(now_eval_save_dir, len(self.eval_dataset))
         
         self.accelerator.wait_for_everyone()
 
-        # 步骤 2: 主进程加载数据、计算分数并选择 top-k
+        # 步骤 3: 主进程加载、计算分数并选择 top-k
         if self.accelerator.is_main_process:
             logger.info(f"Loading projected gradients from {train_final_grads_path}")
             train_projected_grads = torch.load(train_final_grads_path, map_location="cpu")
@@ -321,7 +346,6 @@ class LessSelector:
             logger.info(f"Loading projected gradients from {eval_final_grads_path}")
             eval_projected_grads = torch.load(eval_final_grads_path, map_location="cpu")
 
-            # 计算每个train_grad对所有eval_grad的平均相似度
             train_eval_similarities = (train_projected_grads @ eval_projected_grads.T).mean(dim=1)
             topk = torch.topk(train_eval_similarities, k=num_samples, largest=True)
             selected_indices = topk.indices.tolist()
@@ -330,7 +354,7 @@ class LessSelector:
         else:
             selected_indices = None
 
-        # 步骤 3: 将选择的索引广播到所有进程
+        # 步骤 4: 广播选择的索引
         obj_list = [selected_indices]
         if dist.is_initialized():
             dist.broadcast_object_list(obj_list, src=0)
