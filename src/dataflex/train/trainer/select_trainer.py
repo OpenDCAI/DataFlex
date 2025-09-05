@@ -243,7 +243,7 @@ class SelectTrainer(CustomSeq2SeqTrainer):
         super().__init__(finetuning_args=finetuning_args, processor=processor, gen_kwargs=gen_kwargs, **kwargs)
         if finetuning_args.dynamic_selector == "less":
             from ..selector.less_selector import LessSelector
-            self.selector = LessSelector(dataset=self.train_dataset, eval_dataset=self.eval_dataset, accelerator=self.accelerator, data_collator=self.data_collator)
+            self.selector = LessSelector(dataset=self.train_dataset, eval_dataset=self.eval_dataset, accelerator=self.accelerator, data_collator=self.data_collator, save_dir=os.path.join(self.args.output_dir, "less_output"), seed=self.args.seed)
         else:
             self.selector = LossSelector(dataset=self.train_dataset, accelerator=self.accelerator, data_collator=self.data_collator)
         logger.info("[Dataflex] SelectTrainer initialized")
@@ -747,11 +747,6 @@ class SelectTrainer(CustomSeq2SeqTrainer):
 
                         update_times = (self.state.global_step - self.finetuning_args.warmup_step) // self.finetuning_args.update_step + 1
                         logger.info(f"[Dataflex] Model training paused, starting the {update_times}th dynamic data selection...")
-                        new_indices = self.selector.select(
-                            model=model,
-                            step_id=self.state.global_step,
-                            num_samples=total_train_batch_size * self.finetuning_args.update_step
-                        )
                         if self.finetuning_args.dynamic_selector == "less":
                             new_indices = self.selector.select(
                                 model=model,

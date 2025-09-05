@@ -1,4 +1,69 @@
 {
+  "flan_v2": {
+    "file_name": "/jizhicfs/hymiezhao/ml/dataflex_saves/less_data/train/processed/flan_v2.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant"
+    }
+  },
+  "cot_data": {
+    "file_name": "/jizhicfs/hymiezhao/ml/dataflex_saves/less_data/train/processed/cot_data.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant"
+    }
+  },
+  "dolly_data": {
+    "file_name": "/jizhicfs/hymiezhao/ml/dataflex_saves/less_data/train/processed/dolly_data.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant"
+    }
+  },
+  "oasst1_data": {
+    "file_name": "/jizhicfs/hymiezhao/ml/dataflex_saves/less_data/train/processed/oasst1_data.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant"
+    }
+  },
+  "mmlu_eval": {
+    "file_name": "/jizhicfs/hymiezhao/ml/dataflex_saves/less_data/eval/mmlu/mmlu_eval.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant"
+    }
+  },
   "identity": {
     "file_name": "identity.json"
   },
