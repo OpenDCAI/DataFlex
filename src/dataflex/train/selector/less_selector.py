@@ -351,6 +351,9 @@ class LessSelector:
             selected_indices = topk.indices.tolist()
 
             logger.info(f"Selecting top {num_samples} samples from {len(train_eval_similarities)}.")
+        
+            with open(os.path.join(self.save_dir, str(self.step_id) + "step_selected_indices.json"), "w") as f:
+                json.dump({"selected_indices": selected_indices}, f)
         else:
             selected_indices = None
 

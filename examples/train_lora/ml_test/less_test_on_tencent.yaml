@@ -26,7 +26,7 @@ seed: 42
 ### output
 output_dir: /jizhicfs/hymiezhao/ml/dataflex_saves/saves
 logging_steps: 10
-save_steps: 780
+save_steps: 781
 plot_loss: true
 save_only_model: true
 overwrite_output_dir: true
@@ -55,8 +55,8 @@ ddp_timeout: 180000000
 train_type: dynamic_select
 dynamic_selector: less
 warmup_step: 81
-update_step: 100
-update_times: 7
+update_step: 800
+update_times: 1
 ## eval
 # val_size: 0.001
 # per_device_eval_batch_size: 1
