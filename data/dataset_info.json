@@ -51,6 +51,19 @@
       "assistant_tag": "assistant"
     }
   },
+  "mmlu_eval": {
+    "file_name": "/jizhicfs/hymiezhao/ml/dataflex_saves/less_data/eval/mmlu/mmlu_eval.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant"
+    }
+  },
   "identity": {
     "file_name": "identity.json"
   },
