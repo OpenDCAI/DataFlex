@@ -736,10 +736,10 @@ class SelectTrainer(CustomSeq2SeqTrainer):
 
                     # 动态训练更新
                     if (
-                        self.state.global_step < max_steps and (
+                        self.state.global_step <= max_steps and (
                         self.state.global_step == self.finetuning_args.warmup_step or
                         (self.state.global_step > self.finetuning_args.warmup_step and
-                        self.state.global_step % self.finetuning_args.update_step == 0))
+                        (self.state.global_step - self.finetuning_args.warmup_step) % self.finetuning_args.update_step == 0))
                     ):
                         self.accelerator.wait_for_everyone()
                         torch.cuda.empty_cache()
