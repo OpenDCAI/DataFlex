@@ -2,7 +2,7 @@ import torch
 from typing import List
 import torch.distributed as dist
 from tqdm import tqdm
-from torch.utils.data import DataLoader
+from torch.utils.data import Dataset, DataLoader
 import json
 import os
 
@@ -12,6 +12,17 @@ logging.basicConfig(level=logging.INFO)
 handler = logging.StreamHandler(sys.stdout)
 logger = logging.getLogger(__name__)
 logger.addHandler(handler)
+
+class IndexedDataset(Dataset):
+    def __init__(self, original_dataset):
+        self.dataset = original_dataset
+    
+    def __len__(self):
+        return len(self.dataset)
+    
+    def __getitem__(self, index):
+        data = self.dataset[index]
+        return {"idx": index, **data}
 
 class LossSelector:
     def __init__(self, dataset, accelerator, data_collator):
@@ -51,70 +62,108 @@ class LossSelector:
 
     def select(self, model, step_id: int, num_samples: int):
         model.eval()
-
-        save_dir = "/mnt/public2/code/zzy/LLaMA-Flex/saves/dynamic"
+        save_dir = "/jizhicfs/hymiezhao/zzy/dataflex_saves/indices/high_loss/"
         os.makedirs(save_dir, exist_ok=True)
         save_path = os.path.join(save_dir, f"step_{step_id}.json")
-
-        # ========== 加载或计算 gathered_losses ==========
+    
+        n = len(self.dataset)
+        logger.info(f'selector中的数据集总长度{n}')
+    
+        # ========= 加载或计算（新逻辑，仅支持新文件结构） =========
         if os.path.exists(save_path):
             if self.accelerator.is_main_process:
                 with open(save_path, "r") as f:
                     saved = json.load(f)
-                logger.info(f"[Dataflex] Loss exists, loaded from {save_path}")
-                gathered_losses = torch.tensor(saved["losses"])
+                gathered_losses = torch.tensor(saved["losses"], dtype=torch.float32)
+                assert len(gathered_losses) == n, "保存的 losses 长度应与 dataset 等长"
             else:
                 gathered_losses = None
         else:
-            # 1) 构造 DataLoader
+            # 1) DataLoader
             dataloader = DataLoader(
-                self.dataset,
-                batch_size=1,
+                IndexedDataset(self.dataset),
+                batch_size=1,            
                 shuffle=False,
                 num_workers=2,
-                collate_fn=self.data_collator,
+                collate_fn=self.data_collator, 
             )
             dataloader = self.accelerator.prepare(dataloader)
-
-            # 2) 收集 loss
+    
+            # 2) 本地收集 loss 与 idx
             logger.info(f"[Dataflex] Calculating loss using {self.accelerator.num_processes} GPUs")
-            local_losses = []
+            local_losses, local_indices = [], []
             for batch in tqdm(
                 dataloader,
                 desc=f"[Selector step {step_id}]",
                 disable=not self.accelerator.is_main_process,
-                dynamic_ncols=True
+                dynamic_ncols=True,
             ):
+                idx = batch["idx"]
+                if not torch.is_tensor(idx):
+                    idx = torch.tensor(idx, dtype=torch.long, device=self.accelerator.device)
+                idx = idx.view(-1).to(dtype=torch.long)
+    
                 with torch.no_grad():
-                    loss = model(**batch).loss.detach().unsqueeze(0)
+                    # 注意从 batch 中移除 'idx' 再喂给模型
+                    model_inputs = {k: v for k, v in batch.items() if k != "idx"}
+                    loss = model(**model_inputs).loss.detach().view(-1)  # [B]
+    
                 local_losses.append(loss)
-
-            local_losses = torch.cat(local_losses)
-            gathered_losses = self.accelerator.gather(local_losses)
-
-            # 仅主进程保存
+                local_indices.append(idx)
+    
+            local_losses  = torch.cat(local_losses,  dim=0)  # [N_local_padded]
+            local_indices = torch.cat(local_indices, dim=0)  # [N_local_padded]
+    
+            # 3) 各进程 gather（按 rank 串联，可能含补齐/重复）
+            all_losses  = self.accelerator.gather(local_losses)
+            all_indices = self.accelerator.gather(local_indices)
+    
+            # 4) 主进程按 idx 去重并对齐到 len(dataset)
             if self.accelerator.is_main_process:
+                aligned = torch.full((n,), float("inf"), dtype=all_losses.dtype, device=all_losses.device)
+                seen = set()
+                # 采用“首次出现优先”保证确定性
+                for l, i in zip(all_losses.tolist(), all_indices.tolist()):
+                    if 0 <= i < n and i not in seen:
+                        aligned[i] = l
+                        seen.add(i)
+                # 若极端情况下有没覆盖到的 idx，仍为 +inf；不会进 largest=True 的 topk
+                gathered_losses = aligned
+    
+                # 5) 保存（新格式，仅 losses 等长 + indices 为 0..n-1）
                 with open(save_path, "w") as f:
-                    json.dump({"losses": gathered_losses.cpu().tolist()}, f)
+                    json.dump(
+                        {
+                            "losses": gathered_losses.cpu().tolist(),
+                            "indices": list(range(n)),
+                        },
+                        f,
+                    )
                 logger.info(f"[Dataflex] Loss calculation finished, saved to {save_path}")
-
-        # ========== 所有进程都广播 gathered_losses ==========
+            else:
+                gathered_losses = None
+    
+        # ========= 日志 =========
+        if self.accelerator.is_main_process:
+            logger.info(f'selector选择完的loss长度{len(gathered_losses)}')
+    
+        # ========= 广播 gathered_losses（等长张量） =========
         gathered_list = [gathered_losses if self.accelerator.is_main_process else None]
         dist.broadcast_object_list(gathered_list, src=0)
         gathered_losses = gathered_list[0]
-
-        # ========== 主进程执行 topk，并广播 sel ==========
+    
+        # ========= 主进程 topk，并广播 sel =========
         if self.accelerator.is_main_process:
             topk = torch.topk(gathered_losses, k=num_samples, largest=True)
             sel = topk.indices.tolist()
         else:
             sel = None
-
+    
         sel_list = [sel]
         if dist.is_available() and dist.is_initialized():
             dist.broadcast_object_list(sel_list, src=0)
             sel = sel_list[0]
         else:
             sel = sel or []
-
+    
         return sel
