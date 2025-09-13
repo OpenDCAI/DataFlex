@@ -11,4 +11,5 @@ selectors:
   loss:
     name: loss
     params:
-      cache_dir: /mnt/public2/code/zzy/dataflex_cache
+      cache_dir: /dataflex_cache
+      focus: "medium"
