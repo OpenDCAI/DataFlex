@@ -5,6 +5,7 @@ from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
 import json
 import os
+from dataflex.core.registry import register_selector
 
 import logging
 import sys
@@ -24,12 +25,14 @@ class IndexedDataset(Dataset):
         data = self.dataset[index]
         return {"idx": index, **data}
 
+@register_selector('loss')
 class LossSelector:
-    def __init__(self, dataset, accelerator, data_collator):
+    def __init__(self, dataset, accelerator, data_collator, cache_dir):
         self.dataset = dataset
         self.accelerator = accelerator
         self.seed = 42
         self.data_collator = data_collator
+        self.cache_dir = cache_dir
     
     def warmup(self, num_samples: int, replacement: bool) -> List[List[int]]:
         if self.accelerator.is_main_process:
@@ -60,15 +63,13 @@ class LossSelector:
         return full_indices
 
 
-    def select(self, model, step_id: int, num_samples: int):
+    def select(self, model, step_id: int, num_samples: int, **kwargs):
         model.eval()
-        save_dir = "/jizhicfs/hymiezhao/zzy/dataflex_saves/indices/high_loss/"
+        save_dir = self.cache_dir
         os.makedirs(save_dir, exist_ok=True)
         save_path = os.path.join(save_dir, f"step_{step_id}.json")
     
-        n = len(self.dataset)
-        logger.info(f'selector中的数据集总长度{n}')
-    
+        n = len(self.dataset)    
         # ========= 加载或计算（新逻辑，仅支持新文件结构） =========
         if os.path.exists(save_path):
             if self.accelerator.is_main_process:
@@ -142,10 +143,6 @@ class LossSelector:
                 logger.info(f"[Dataflex] Loss calculation finished, saved to {save_path}")
             else:
                 gathered_losses = None
-    
-        # ========= 日志 =========
-        if self.accelerator.is_main_process:
-            logger.info(f'selector选择完的loss长度{len(gathered_losses)}')
     
         # ========= 广播 gathered_losses（等长张量） =========
         gathered_list = [gathered_losses if self.accelerator.is_main_process else None]

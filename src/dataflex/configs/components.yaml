@@ -1,0 +1,14 @@
+# configs/components.yaml
+selectors:
+  less:
+    name: less
+    params:
+      save_dir: ${output_dir}/less_output
+      gradient_type: adamw
+      proj_dim: 4096
+      seed: 123
+
+  loss:
+    name: loss
+    params:
+      cache_dir: /mnt/public2/code/zzy/dataflex_cache
