@@ -11,6 +11,7 @@ lora_rank: 128
 lora_alpha: 512
 # deepspeed: examples/deepspeed/ds_z3_config.json  # choices: [ds_z0_config.json, ds_z2_config.json, ds_z3_config.json]
 
+
 ### dataset
 dataset: flan_v2,cot_data,dolly_data,oasst1_data
 eval_dataset: mmlu_eval
@@ -24,7 +25,7 @@ dataloader_num_workers: 0
 seed: 42
 
 ### output
-output_dir: /jizhicfs/hymiezhao/zzy/dataflex_saves/llama3.1_8b/four_train2mmlu/lora_high_loss_result
+output_dir: /jizhicfs/hymiezhao/zzy/dataflex_saves/llama3.1_8b/four_train2mmlu/lora_mid_loss_result
 logging_steps: 10
 save_steps: 100
 plot_loss: true
@@ -53,10 +54,11 @@ ddp_timeout: 180000000
 
 ### dynamic_train
 train_type: dynamic_select
-dynamic_selector: loss
+components_cfg_file: src/dataflex/configs/components.yaml
+component_name: loss
 warmup_step: 200
-update_step: 1000
-update_times: 2
+update_step: 500
+update_times: 4
 ## eval
 # val_size: 0.001
 # per_device_eval_batch_size: 1
