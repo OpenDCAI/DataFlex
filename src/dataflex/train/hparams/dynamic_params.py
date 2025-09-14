@@ -524,9 +524,13 @@ class DynamicFinetuningArguments(
             )
         }
     )
-    dynamic_selector: str = field(
-        default="loss",
-        metadata={"help": "The selector for dynamic training."},
+    components_cfg_file: str = field(
+        default="configs/components.yaml",
+        metadata={"help": "Path to the components configuration file."},
+    )
+    component_name: str = field(
+        default="Loss",
+        metadata={"help": "The component name defined in the components configuration file."},
     )
     warmup_step: int = field(
         default=0,

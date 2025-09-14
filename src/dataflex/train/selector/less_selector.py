@@ -8,7 +8,7 @@ from trak.projectors import BasicProjector, CudaProjector, ProjectionType
 import json
 import os
 import glob # 用于文件查找
-
+from dataflex.core.registry import register_selector
 import logging
 import sys
 logging.basicConfig(level=logging.INFO)
@@ -28,6 +28,7 @@ class IndexedDataset(Dataset):
     def __getitem__(self, index):
         return index, self.original_dataset[index]
 
+@register_selector('less')
 class LessSelector:
     def __init__(self, 
                  dataset, 

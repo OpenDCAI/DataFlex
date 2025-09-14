@@ -141,7 +141,9 @@ from transformers.utils import (
 from transformers.utils.deprecation import deprecate_kwarg
 from transformers.utils.quantization_config import QuantizationMethod
 
-from ..selector.loss_selector import LossSelector
+from dataflex.utils.load_component import load_component
+from dataflex.core.registry import REGISTRY
+import dataflex.train.selector
 
 TRAINING_ARGS_NAME = "training_args.bin"
 TRAINER_STATE_NAME = "trainer_state.json"
@@ -241,11 +243,30 @@ class SelectTrainer(CustomSeq2SeqTrainer):
     def __init__(self, finetuning_args, processor=None, gen_kwargs=None, **kwargs):
         # 初始化父类
         super().__init__(finetuning_args=finetuning_args, processor=processor, gen_kwargs=gen_kwargs, **kwargs)
-        if finetuning_args.dynamic_selector == "less":
-            from ..selector.less_selector import LessSelector
-            self.selector = LessSelector(dataset=self.train_dataset, eval_dataset=self.eval_dataset, accelerator=self.accelerator, data_collator=self.data_collator, save_dir=os.path.join(self.args.output_dir, "less_output"), seed=self.args.seed)
-        else:
-            self.selector = LossSelector(dataset=self.train_dataset, accelerator=self.accelerator, data_collator=self.data_collator)
+        # if finetuning_args.dynamic_selector == "less":
+        #     from ..selector.less_selector import LessSelector
+        #     self.selector = LessSelector(dataset=self.train_dataset, eval_dataset=self.eval_dataset, accelerator=self.accelerator, data_collator=self.data_collator, save_dir=os.path.join(self.args.output_dir, "less_output"), seed=self.args.seed)
+        # else:
+        #     self.selector = LossSelector(dataset=self.train_dataset, accelerator=self.accelerator, data_collator=self.data_collator)
+        name = finetuning_args.component_name
+        # 取该 selector 的 params（可替换 ${output_dir}）
+        sel_params = load_component(
+            finetuning_args.components_cfg_file,
+            name,
+            runtime_vars={}
+        )
+
+        # 统一提供“动态运行期依赖”，静态类会自动忽略
+        runtime = dict(
+            dataset=self.train_dataset,
+            eval_dataset=self.eval_dataset,
+            accelerator=self.accelerator,
+            data_collator=self.data_collator,
+        )
+
+        # 实例化（无任何 if/else）
+        self.selector = REGISTRY.build("selector", name, runtime=runtime, cfg=sel_params)
+        logger.info(f"[SelectTrainer] selector={name}, params={sel_params}")
         logger.info("[Dataflex] SelectTrainer initialized")
 
     @override
@@ -739,7 +760,7 @@ class SelectTrainer(CustomSeq2SeqTrainer):
                         self.state.global_step < max_steps and (
                         self.state.global_step == self.finetuning_args.warmup_step or
                         (self.state.global_step > self.finetuning_args.warmup_step and
-                        self.state.global_step % self.finetuning_args.update_step == 0))
+                        (self.state.global_step - self.finetuning_args.warmup_step) % self.finetuning_args.update_step == 0))
                     ):
                         self.accelerator.wait_for_everyone()
                         torch.cuda.empty_cache()
@@ -748,19 +769,19 @@ class SelectTrainer(CustomSeq2SeqTrainer):
 
                         update_times = (self.state.global_step - self.finetuning_args.warmup_step) // self.finetuning_args.update_step + 1
                         logger.info(f"[Dataflex] Model training paused, starting the {update_times}th dynamic data selection...")
-                        if self.finetuning_args.dynamic_selector == "less":
-                            new_indices = self.selector.select(
-                                model=model,
-                                step_id=self.state.global_step,
-                                num_samples=total_train_batch_size * self.finetuning_args.update_step,
-                                optimizer_state=self.optimizer.state,
-                            )
-                        else:
-                            new_indices = self.selector.select(
-                                model=model,
-                                step_id=self.state.global_step,
-                                num_samples=total_train_batch_size * self.finetuning_args.update_step
-                            )
+                        # 这里传一些特定的selector参数
+                        extra_args = dict(
+                            optimizer_state=self.optimizer.state,
+                            scheduler_state=self.lr_scheduler.state_dict(),
+                            something_else="foo",
+                        )
+                        new_indices = self.selector.select(
+                            model=model,
+                            step_id=self.state.global_step,
+                            num_samples=total_train_batch_size * self.finetuning_args.update_step,
+                            **extra_args
+                        )
+
                         # 每个进程根据 local_indices 构造 dataloader
                         train_loader = self.get_train_dataloader(indices=new_indices)
                         current_iterator = iter(train_loader)
