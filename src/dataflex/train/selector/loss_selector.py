@@ -1,3 +1,6 @@
+from dataflex.core.registry import register_selector
+from .base_selector import Selector, logger
+
 import torch
 from typing import List
 import torch.distributed as dist
@@ -5,14 +8,6 @@ from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
 import json
 import os
-from dataflex.core.registry import register_selector
-
-import logging
-import sys
-logging.basicConfig(level=logging.INFO)
-handler = logging.StreamHandler(sys.stdout)
-logger = logging.getLogger(__name__)
-logger.addHandler(handler)
 
 class IndexedDataset(Dataset):
     def __init__(self, original_dataset):
@@ -26,7 +21,7 @@ class IndexedDataset(Dataset):
         return {"idx": index, **data}
 
 @register_selector('loss')
-class LossSelector:
+class LossSelector(Selector):
     def __init__(
         self,
         dataset,
@@ -39,11 +34,7 @@ class LossSelector:
         replacement: bool = False,        # 是否放回采样
         temperature: float = 1.0,         # 温度控制
     ):
-        self.dataset = dataset
-        self.accelerator = accelerator
-        self.seed = 42
-        self.data_collator = data_collator
-        self.cache_dir = cache_dir
+        super().__init__(dataset, accelerator, data_collator, cache_dir)
 
         # 新增的采样控制参数
         self.focus = str(focus).lower()
@@ -53,35 +44,8 @@ class LossSelector:
         self.quantiles = quantiles
         self.replacement = replacement
         self.temperature = temperature
-    
-    def warmup(self, num_samples: int, replacement: bool) -> List[List[int]]:
-        if self.accelerator.is_main_process:
-            dataset_size = len(self.dataset)
-            gen = torch.Generator()
-            gen.manual_seed(self.seed)
 
-            if replacement:
-                full_indices = torch.randint(
-                    low=0, high=dataset_size, size=(num_samples,), generator=gen
-                ).tolist()
-            else:
-                if num_samples > dataset_size:
-                    raise ValueError(
-                        f"Cannot sample {num_samples} without replacement from {dataset_size} samples"
-                    )
-                full_indices = torch.randperm(dataset_size, generator=gen)[:num_samples].tolist()
-        else:
-            full_indices = None
-
-        obj = [full_indices]
-        if dist.is_available() and dist.is_initialized():
-            dist.broadcast_object_list(obj, src=0)
-            full_indices = obj[0]
-        else:
-            full_indices = full_indices or []
-
-        return full_indices
-
+        logger.info(f"LossSelector initialized.")
 
     def select(self, model, step_id: int, num_samples: int, **kwargs):
         model.eval()
