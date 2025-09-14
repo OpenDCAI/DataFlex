@@ -3,7 +3,7 @@ selectors:
   less:
     name: less
     params:
-      save_dir: ${output_dir}/less_output
+      save_dir: ../dataflex_saves/less_output
       gradient_type: adamw
       proj_dim: 4096
       seed: 123

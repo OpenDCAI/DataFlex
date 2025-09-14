@@ -311,7 +311,7 @@ class LessSelector:
                 os.remove(file_path)
             logger.info(f"Cleaned up temporary chunk files in {save_dir}")
 
-    def select(self, model, step_id: int, num_samples: int, optimizer_state: Optional[Dict] = None) -> List[int]:
+    def select(self, model, step_id: int, num_samples: int, **kwargs) -> List[int]:
         """
         选择得分最高的 num_samples 个样本。
         """
@@ -325,6 +325,7 @@ class LessSelector:
         # 步骤 1: 计算训练集梯度
         if not os.path.exists(train_final_grads_path):
             os.makedirs(now_train_save_dir, exist_ok=True)
+            optimizer_state = kwargs.get('optimizer_state', None) 
             self._collect_and_save_projected_gradients(model, now_train_save_dir, self.dataset, optimizer_state)
             self._merge_and_normalize_info(now_train_save_dir, len(self.dataset))
         
