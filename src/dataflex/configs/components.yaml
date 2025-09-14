@@ -11,5 +11,11 @@ selectors:
   loss:
     name: loss
     params:
-      cache_dir: /dataflex_cache
+      cache_dir: ../dataflex_cache
       focus: "medium"
+
+  delta_loss:
+    name: delta_loss
+    params:
+      cache_dir: ../dataflex_cache
+      window_size: 0.2

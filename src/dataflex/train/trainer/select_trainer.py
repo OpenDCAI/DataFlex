@@ -766,13 +766,14 @@ class SelectTrainer(CustomSeq2SeqTrainer):
                         torch.cuda.empty_cache()
                         torch.distributed.barrier()
 
-                        update_times = (self.state.global_step - self.finetuning_args.warmup_step) // self.finetuning_args.update_step + 1
-                        logger.info(f"[Dataflex] Model training paused, starting the {update_times}th dynamic data selection...")
+                        current_update_times = (self.state.global_step - self.finetuning_args.warmup_step) // self.finetuning_args.update_step + 1
+                        logger.info(f"[Dataflex] Model training paused, starting the {current_update_times}th dynamic data selection...")
                         # 这里传一些特定的selector参数
                         extra_args = dict(
                             optimizer_state=self.optimizer.state,
                             scheduler_state=self.lr_scheduler.state_dict(),
-                            something_else="foo",
+                            current_update_times=current_update_times,
+                            update_times=self.finetuning_args.update_times
                         )
                         new_indices = self.selector.select(
                             model=model,
@@ -787,7 +788,6 @@ class SelectTrainer(CustomSeq2SeqTrainer):
 
                         if self.accelerator.is_main_process:
                             logger.info(f"[Dataflex] Updated dataloader at step {self.state.global_step}, {len(new_indices)} samples in total.")
-
 
                 else:
                     self.control = self.callback_handler.on_substep_end(args, self.state, self.control)
