@@ -1,3 +1,6 @@
+from dataflex.core.registry import register_selector
+from .base_selector import Selector, logger
+
 import torch
 from torch.nn.functional import normalize
 from typing import List, Dict, Optional
@@ -8,13 +11,6 @@ from trak.projectors import BasicProjector, CudaProjector, ProjectionType
 import json
 import os
 import glob # 用于文件查找
-from dataflex.core.registry import register_selector
-import logging
-import sys
-logging.basicConfig(level=logging.INFO)
-handler = logging.StreamHandler(sys.stdout)
-logger = logging.getLogger(__name__)
-logger.addHandler(handler)
 
 # NEW: IndexedDataset Wrapper
 class IndexedDataset(Dataset):
@@ -29,24 +25,22 @@ class IndexedDataset(Dataset):
         return index, self.original_dataset[index]
 
 @register_selector('less')
-class LessSelector:
+class LessSelector(Selector):
     def __init__(self, 
                  dataset, 
                  eval_dataset,
                  accelerator, 
                  data_collator,
-                 save_dir,
+                 cache_dir,
                  gradient_type: str = "adam",
                  proj_dim: int = 8192,
                  seed: int = 42):
         """
         初始化 LessSelector.
         """
-        self.dataset = dataset
+        super().__init__(dataset, accelerator, data_collator, cache_dir)
+
         self.eval_dataset = eval_dataset
-        self.accelerator = accelerator
-        self.original_data_collator = data_collator
-        self.save_dir = save_dir
         self.gradient_type = gradient_type
         self.proj_dim = proj_dim
         self.seed = seed
@@ -54,36 +48,8 @@ class LessSelector:
         self.device = self.accelerator.device
         self.dtype = torch.float16
 
-        os.makedirs(self.save_dir, exist_ok=True)
-        logger.info(f"LessSelector initialized. Projected gradients will be saved in {self.save_dir}")
-     
-    def warmup(self, num_samples: int, replacement: bool) -> List[List[int]]:
-        if self.accelerator.is_main_process:
-            dataset_size = len(self.dataset)
-            gen = torch.Generator()
-            gen.manual_seed(self.seed)
-
-            if replacement:
-                full_indices = torch.randint(
-                    low=0, high=dataset_size, size=(num_samples,), generator=gen
-                ).tolist()
-            else:
-                if num_samples > dataset_size:
-                    raise ValueError(
-                        f"Cannot sample {num_samples} without replacement from {dataset_size} samples"
-                    )
-                full_indices = torch.randperm(dataset_size, generator=gen)[:num_samples].tolist()
-        else:
-            full_indices = None
-
-        obj = [full_indices]
-        if dist.is_available() and dist.is_initialized():
-            dist.broadcast_object_list(obj, src=0)
-            full_indices = obj[0]
-        else:
-            full_indices = full_indices or []
-
-        return full_indices
+        os.makedirs(self.cache_dir, exist_ok=True)
+        logger.info(f"LessSelector initialized. Projected gradients will be saved in {self.cache_dir}")
 
     def _get_number_of_params(self, model) -> int:
         """计算模型中需要梯度的参数数量。"""
@@ -198,7 +164,7 @@ class LessSelector:
         def indexed_collator_wrapper(features):
             indices = [f[0] for f in features]
             original_data = [f[1] for f in features]
-            collated_batch = self.original_data_collator(original_data)
+            collated_batch = self.data_collator(original_data)
             return {'indices': torch.tensor(indices), 'batch': collated_batch}
 
         dataloader = DataLoader(
@@ -315,8 +281,8 @@ class LessSelector:
         """
         选择得分最高的 num_samples 个样本。
         """
-        now_train_save_dir = os.path.join(self.save_dir, "train", str(step_id))
-        now_eval_save_dir = os.path.join(self.save_dir, "eval", str(step_id))
+        now_train_save_dir = os.path.join(self.cache_dir, "train", str(step_id))
+        now_eval_save_dir = os.path.join(self.cache_dir, "eval", str(step_id))
         
         self.step_id = step_id
         train_final_grads_path = os.path.join(now_train_save_dir, "all_projected_grads.pt")
@@ -354,7 +320,7 @@ class LessSelector:
 
             logger.info(f"Selecting top {num_samples} samples from {len(train_eval_similarities)}.")
         
-            with open(os.path.join(self.save_dir, str(self.step_id) + "step_selected_indices.json"), "w") as f:
+            with open(os.path.join(self.cache_dir, str(self.step_id) + "step_selected_indices.json"), "w") as f:
                 json.dump({"selected_indices": selected_indices}, f)
         else:
             selected_indices = None
