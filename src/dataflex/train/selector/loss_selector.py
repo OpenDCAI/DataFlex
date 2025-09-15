@@ -2,7 +2,6 @@ from dataflex.core.registry import register_selector
 from .base_selector import Selector, logger
 
 import torch
-from typing import List
 import torch.distributed as dist
 from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader

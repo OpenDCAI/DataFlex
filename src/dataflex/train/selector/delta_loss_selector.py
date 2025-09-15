@@ -7,15 +7,7 @@ from torch.utils.data import Dataset, DataLoader
 from typing import List
 import torch.distributed as dist
 from dataflex.core.registry import register_selector
-
-import logging
-import sys
-
-# 配置日志
-logging.basicConfig(level=logging.INFO)
-handler = logging.StreamHandler(sys.stdout)
-logger = logging.getLogger(__name__)
-logger.addHandler(handler)
+from .base_selector import logger, Selector
 
 def sigmoid(x, k):
     return 1 / (1 + np.exp(-k * (x - 0.5)))
@@ -44,7 +36,7 @@ class IndexedDataset(Dataset):
         return {"idx": index, **data}
 
 @register_selector('delta_loss')
-class DeltaLossSelector:
+class DeltaLossSelector(Selector):
     def __init__(
         self,
         dataset,
@@ -53,11 +45,8 @@ class DeltaLossSelector:
         cache_dir,
         window_size: float = 0.2,         # 窗口大小，默认20%
     ):
-        self.dataset = dataset
-        self.accelerator = accelerator
+        super().__init__(dataset, accelerator, data_collator, cache_dir)
         self.seed = 42
-        self.data_collator = data_collator
-        self.cache_dir = cache_dir
         self.window_size = window_size
         self.initial_losses = None
         self.first_time = True
