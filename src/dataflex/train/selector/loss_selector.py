@@ -2,7 +2,6 @@ from dataflex.core.registry import register_selector
 from .base_selector import Selector, logger
 
 import torch
-from typing import List
 import torch.distributed as dist
 from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
@@ -49,9 +48,8 @@ class LossSelector(Selector):
 
     def select(self, model, step_id: int, num_samples: int, **kwargs):
         model.eval()
-        save_dir = self.cache_dir
-        os.makedirs(save_dir, exist_ok=True)
-        save_path = os.path.join(save_dir, f"step_{step_id}.json")
+        os.makedirs(self.cache_dir, exist_ok=True)
+        save_path = os.path.join(self.cache_dir, f"step_{step_id}.json")
     
         n = len(self.dataset)    
         # ========= 加载或计算（新逻辑，仅支持新文件结构） =========

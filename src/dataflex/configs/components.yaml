@@ -14,6 +14,12 @@ selectors:
       cache_dir: ../dataflex_saves/loss_output
       focus: "medium"
 
+  delta_loss:
+    name: delta_loss
+    params:
+      cache_dir: ../dataflex_saves/delta_loss_output
+      window_size: 0.2
+
   custom:
     name: custom
     params:
