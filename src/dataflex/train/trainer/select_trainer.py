@@ -243,11 +243,6 @@ class SelectTrainer(CustomSeq2SeqTrainer):
     def __init__(self, finetuning_args, processor=None, gen_kwargs=None, **kwargs):
         # 初始化父类
         super().__init__(finetuning_args=finetuning_args, processor=processor, gen_kwargs=gen_kwargs, **kwargs)
-        # if finetuning_args.dynamic_selector == "less":
-        #     from ..selector.less_selector import LessSelector
-        #     self.selector = LessSelector(dataset=self.train_dataset, eval_dataset=self.eval_dataset, accelerator=self.accelerator, data_collator=self.data_collator, save_dir=os.path.join(self.args.output_dir, "less_output"), seed=self.args.seed)
-        # else:
-        #     self.selector = LossSelector(dataset=self.train_dataset, accelerator=self.accelerator, data_collator=self.data_collator)
         name = finetuning_args.component_name
         # 取该 selector 的 params（可替换 ${output_dir}）
         sel_params = load_component(
@@ -764,7 +759,8 @@ class SelectTrainer(CustomSeq2SeqTrainer):
                     ):
                         self.accelerator.wait_for_everyone()
                         torch.cuda.empty_cache()
-                        torch.distributed.barrier()
+                        if dist.is_initialized():
+                            dist.barrier()
 
                         current_update_times = (self.state.global_step - self.finetuning_args.warmup_step) // self.finetuning_args.update_step + 1
                         logger.info(f"[Dataflex] Model training paused, starting the {current_update_times}th dynamic data selection...")

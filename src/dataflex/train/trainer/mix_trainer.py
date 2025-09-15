@@ -754,7 +754,8 @@ class MixTrainer(CustomSeq2SeqTrainer):
                     ):
                         self.accelerator.wait_for_everyone()
                         torch.cuda.empty_cache()
-                        torch.distributed.barrier()
+                        if dist.is_initialized():
+                            dist.barrier()
 
                         update_times = (self.state.global_step - self.finetuning_args.warmup_step) // self.finetuning_args.update_step + 1
                         logger.info(f"[Dataflex] Model training paused, starting the {update_times}th dynamic data mixture...")

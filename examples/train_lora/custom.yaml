@@ -9,7 +9,7 @@ finetuning_type: lora
 lora_target: all
 lora_rank: 16
 lora_alpha: 8
-# deepspeed: examples/deepspeed/ds_z3_config.json  # choices: [ds_z0_config.json, ds_z2_config.json, ds_z3_config.json]
+#deepspeed: examples/deepspeed/ds_z3_config.json  # choices: [ds_z0_config.json, ds_z2_config.json, ds_z3_config.json]
 
 ### dataset
 dataset: alpaca_en_demo
@@ -52,10 +52,11 @@ ddp_timeout: 180000000
 
 ### dynamic_train
 train_type: dynamic_select
+components_cfg_file: src/dataflex/configs/components.yaml
+component_name: custom
 warmup_step: 4
 update_step: 3
 update_times: 2
-dynamic_selector: less
 
 eval_dataset: alpaca_zh_demo
 

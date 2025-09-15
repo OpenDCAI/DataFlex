@@ -3,7 +3,7 @@ selectors:
   less:
     name: less
     params:
-      save_dir: ${output_dir}/less_output
+      cache_dir: ../dataflex_saves/less_output
       gradient_type: adamw
       proj_dim: 4096
       seed: 123
@@ -11,11 +11,16 @@ selectors:
   loss:
     name: loss
     params:
-      cache_dir: ../dataflex_saves
+      cache_dir: ../dataflex_saves/loss_output
       focus: "medium"
 
   delta_loss:
     name: delta_loss
     params:
-      cache_dir: ../dataflex_saves
+      cache_dir: ../dataflex_saves/delta_loss_output
       window_size: 0.2
+
+  custom:
+    name: custom
+    params:
+      cache_dir: ../dataflex_saves/custom_output
