@@ -1,6 +1,6 @@
 from dataflex.core.registry import register_selector
-from .base_selector import Selector, logger
-
+from .base_selector import Selector
+from dataflex.utils.logging import logger
 import torch
 from torch.nn.functional import normalize
 from typing import List, Dict, Optional
