@@ -224,13 +224,11 @@ class DeltaLossSelector(Selector):
                 logger.info(f"[Dataflex] Window delta loss stats:")
                 logger.info(f"  Max 5: {window_delta_loss[:5].cpu().numpy()}")
                 logger.info(f"  Min 5: {window_delta_loss[-5:].cpu().numpy()}")
-            # 获取窗口内的样本索引
-            window_indices = torch.arange(window_start, window_end).long()
-
-            probs = torch.full((len(gathered_losses),), 0.025)
+            probs = torch.full((len(delta_loss),), 0.025, device=delta_loss.device)
 
             # 设置窗口内的样本的概率较大
-            probs[window_indices] = 1.0  # 窗口内的样本设置为较大的概率值（可以调节大小）
+            selected = sorted_indices[window_start:window_end]
+            probs[selected] = 1.0
 
             # 归一化概率
             probs = probs / probs.sum()  # 归一化概率，使总和为1

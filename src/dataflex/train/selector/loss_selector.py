@@ -121,9 +121,9 @@ class LossSelector(Selector):
             gathered_losses = None
     
         # ========= 广播 gathered_losses（等长张量） =========
-        gathered_list = [gathered_losses if self.accelerator.is_main_process else None]
-        dist.broadcast_object_list(gathered_list, src=0)
-        gathered_losses = gathered_list[0]
+        # gathered_list = [gathered_losses if self.accelerator.is_main_process else None]
+        # dist.broadcast_object_list(gathered_list, src=0)
+        # gathered_losses = gathered_list[0]
     
         # ========= 主进程：基于分布的采样 =========
         if self.accelerator.is_main_process:
