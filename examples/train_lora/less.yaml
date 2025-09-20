@@ -1,5 +1,5 @@
 ### model
-model_name_or_path: /data/malu/Qwen2.5-0.5B-Instruct
+model_name_or_path: meta-llama/Llama-3.1-8B
 trust_remote_code: true
 
 ### method
@@ -23,7 +23,7 @@ dataloader_num_workers: 0
 seed: 42
 
 ### output
-output_dir: /data/malu/DataFlex-Preview/saves/test
+output_dir: ../dataflex_saves/Llama-3.1-8B/less_result/
 logging_steps: 10
 save_steps: 100
 plot_loss: true
