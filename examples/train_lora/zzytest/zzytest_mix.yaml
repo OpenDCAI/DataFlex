@@ -12,7 +12,7 @@ lora_alpha: 8
 # deepspeed: examples/deepspeed/ds_z3_config.json
 
 ### dataset
-dataset: alpaca_en_demo,identity   # 多数据集逗号分隔
+dataset: alpaca_en_demo,alpaca_zh_demo   # 多数据集逗号分隔
 template: qwen
 cutoff_len: 4096
 overwrite_cache: true
@@ -50,7 +50,7 @@ train_type: dynamic_mix   # 选择训练器类型。可选值包括：
 components_cfg_file: src/dataflex/configs/components.yaml
 component_name: random
 mixture_sample_rule: mixture     # 初始采样规则，mixture为根据init_mixture_proportions比例混合（可动态调整），stratified为固定按源数据集大小比例分层，uniform为固定均匀分布
-init_mixture_proportions: [0.7, 0.3]         # 对应 alpaca_en_demo:identity 的比例
+init_mixture_proportions: [0.7, 0.3]         # 对应初始的比例
 warmup_step: 4
 update_step: 3
 update_times: 2
