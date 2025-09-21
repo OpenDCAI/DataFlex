@@ -1,5 +1,6 @@
 from dataflex.core.registry import register_selector
-from .base_selector import logger, Selector
+from dataflex.utils.logging import logger
+from .base_selector import Selector
 
 @register_selector('custom')
 class CustomSelector(Selector):

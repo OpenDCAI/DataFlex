@@ -57,7 +57,7 @@ train_type: dynamic_select   # 选择训练器类型。可选值包括：
                           # "dynamic_weighting" - 动态加权训练器（尚未完成）
                           # "static" - 默认静态训练器
 components_cfg_file: src/dataflex/configs/components.yaml
-component_name: delta_loss
+component_name: delta_loss  # 选择组件名称，对应 components_cfg_file 中定义的组件
 warmup_step: 4
 update_step: 3
 update_times: 4

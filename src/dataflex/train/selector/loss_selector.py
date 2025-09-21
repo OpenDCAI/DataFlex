@@ -1,5 +1,7 @@
 from dataflex.core.registry import register_selector
-from .base_selector import Selector, logger
+from dataflex.utils.selector_io import load_cached_selection, save_selection
+from dataflex.utils.logging import logger
+from .base_selector import Selector
 
 import torch
 import torch.distributed as dist
@@ -50,86 +52,78 @@ class LossSelector(Selector):
         model.eval()
         os.makedirs(self.cache_dir, exist_ok=True)
         save_path = os.path.join(self.cache_dir, f"step_{step_id}.json")
-    
-        n = len(self.dataset)    
-        # ========= 加载或计算（新逻辑，仅支持新文件结构） =========
+        n = len(self.dataset)
         if os.path.exists(save_path):
             if self.accelerator.is_main_process:
-                with open(save_path, "r") as f:
-                    saved = json.load(f)
-                gathered_losses = torch.tensor(saved["losses"], dtype=torch.float32)
-                assert len(gathered_losses) == n, "保存的 losses 长度应与 dataset 等长"
+                cached_indices, _ = load_cached_selection(save_path)
             else:
-                gathered_losses = None
+                cached_indices = None
+            cached_indices_list = [cached_indices]
+            if dist.is_available() and dist.is_initialized():
+                dist.broadcast_object_list(cached_indices_list, src=0)
+                cached_indices = cached_indices_list[0]
+            else:
+                cached_indices = cached_indices or []
+            return cached_indices
+        
+        # 1) DataLoader
+        dataloader = DataLoader(
+            IndexedDataset(self.dataset),
+            batch_size=1,            
+            shuffle=False,
+            num_workers=2,
+            collate_fn=self.data_collator, 
+        )
+        dataloader = self.accelerator.prepare(dataloader)
+
+        # 2) 本地收集 loss 与 idx
+        logger.info(f"[Dataflex] Calculating loss using {self.accelerator.num_processes} GPUs")
+        local_losses, local_indices = [], []
+        for batch in tqdm(
+            dataloader,
+            desc=f"[Selector step {step_id}]",
+            disable=not self.accelerator.is_main_process,
+            dynamic_ncols=True,
+        ):
+            idx = batch["idx"]
+            if not torch.is_tensor(idx):
+                idx = torch.tensor(idx, dtype=torch.long, device=self.accelerator.device)
+            idx = idx.view(-1).to(dtype=torch.long)
+
+            with torch.no_grad():
+                # 注意从 batch 中移除 'idx' 再喂给模型
+                model_inputs = {k: v for k, v in batch.items() if k != "idx"}
+                loss = model(**model_inputs).loss.detach().view(-1)  # [B]
+
+            local_losses.append(loss)
+            local_indices.append(idx)
+
+        local_losses  = torch.cat(local_losses,  dim=0)  # [N_local_padded]
+        local_indices = torch.cat(local_indices, dim=0)  # [N_local_padded]
+
+        # 3) 各进程 gather（按 rank 串联，可能含补齐/重复）
+        all_losses  = self.accelerator.gather(local_losses)
+        all_indices = self.accelerator.gather(local_indices)
+
+        # 4) 主进程按 idx 去重并对齐到 len(dataset)
+        if self.accelerator.is_main_process:
+            aligned = torch.full((n,), float("inf"), dtype=all_losses.dtype, device=all_losses.device)
+            seen = set()
+            # 采用“首次出现优先”保证确定性
+            for l, i in zip(all_losses.tolist(), all_indices.tolist()):
+                if 0 <= i < n and i not in seen:
+                    aligned[i] = l
+                    seen.add(i)
+            # 若极端情况下有没覆盖到的 idx，仍为 +inf；不会进 largest=True 的 topk
+            gathered_losses = aligned
+            logger.info(f"[Dataflex] Loss calculation finished")
         else:
-            # 1) DataLoader
-            dataloader = DataLoader(
-                IndexedDataset(self.dataset),
-                batch_size=1,            
-                shuffle=False,
-                num_workers=2,
-                collate_fn=self.data_collator, 
-            )
-            dataloader = self.accelerator.prepare(dataloader)
-    
-            # 2) 本地收集 loss 与 idx
-            logger.info(f"[Dataflex] Calculating loss using {self.accelerator.num_processes} GPUs")
-            local_losses, local_indices = [], []
-            for batch in tqdm(
-                dataloader,
-                desc=f"[Selector step {step_id}]",
-                disable=not self.accelerator.is_main_process,
-                dynamic_ncols=True,
-            ):
-                idx = batch["idx"]
-                if not torch.is_tensor(idx):
-                    idx = torch.tensor(idx, dtype=torch.long, device=self.accelerator.device)
-                idx = idx.view(-1).to(dtype=torch.long)
-    
-                with torch.no_grad():
-                    # 注意从 batch 中移除 'idx' 再喂给模型
-                    model_inputs = {k: v for k, v in batch.items() if k != "idx"}
-                    loss = model(**model_inputs).loss.detach().view(-1)  # [B]
-    
-                local_losses.append(loss)
-                local_indices.append(idx)
-    
-            local_losses  = torch.cat(local_losses,  dim=0)  # [N_local_padded]
-            local_indices = torch.cat(local_indices, dim=0)  # [N_local_padded]
-    
-            # 3) 各进程 gather（按 rank 串联，可能含补齐/重复）
-            all_losses  = self.accelerator.gather(local_losses)
-            all_indices = self.accelerator.gather(local_indices)
-    
-            # 4) 主进程按 idx 去重并对齐到 len(dataset)
-            if self.accelerator.is_main_process:
-                aligned = torch.full((n,), float("inf"), dtype=all_losses.dtype, device=all_losses.device)
-                seen = set()
-                # 采用“首次出现优先”保证确定性
-                for l, i in zip(all_losses.tolist(), all_indices.tolist()):
-                    if 0 <= i < n and i not in seen:
-                        aligned[i] = l
-                        seen.add(i)
-                # 若极端情况下有没覆盖到的 idx，仍为 +inf；不会进 largest=True 的 topk
-                gathered_losses = aligned
-    
-                # 5) 保存（新格式，仅 losses 等长 + indices 为 0..n-1）
-                with open(save_path, "w") as f:
-                    json.dump(
-                        {
-                            "losses": gathered_losses.cpu().tolist(),
-                            "indices": list(range(n)),
-                        },
-                        f,
-                    )
-                logger.info(f"[Dataflex] Loss calculation finished, saved to {save_path}")
-            else:
-                gathered_losses = None
+            gathered_losses = None
     
         # ========= 广播 gathered_losses（等长张量） =========
-        gathered_list = [gathered_losses if self.accelerator.is_main_process else None]
-        dist.broadcast_object_list(gathered_list, src=0)
-        gathered_losses = gathered_list[0]
+        # gathered_list = [gathered_losses if self.accelerator.is_main_process else None]
+        # dist.broadcast_object_list(gathered_list, src=0)
+        # gathered_losses = gathered_list[0]
     
         # ========= 主进程：基于分布的采样 =========
         if self.accelerator.is_main_process:
@@ -183,6 +177,12 @@ class LossSelector(Selector):
                 replacement=effective_replacement, generator=gen
             )
             sel = sel_tensor.tolist()
+
+            # ========= 4) 保存（只保存“被选中的 indices + 对应 metric”） =========
+            metric_payload = {
+                "loss": [float(losses[i].item()) for i in sel]
+            }
+            save_selection(save_path, sel, metric_payload, self.accelerator)
         else:
             sel = None
 
@@ -193,5 +193,5 @@ class LossSelector(Selector):
             sel = sel_list[0]
         else:
             sel = sel or []
-    
+            
         return sel

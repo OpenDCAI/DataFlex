@@ -3,13 +3,6 @@ from typing import List
 import torch
 from torch import distributed as dist
 
-import logging
-import sys
-logging.basicConfig(level=logging.INFO)
-handler = logging.StreamHandler(sys.stdout)
-logger = logging.getLogger(__name__)
-logger.addHandler(handler)
-
 class Selector(ABC):
     def __init__(self, dataset, accelerator, data_collator, cache_dir):
         self.dataset = dataset

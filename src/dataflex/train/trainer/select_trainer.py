@@ -40,7 +40,6 @@ import numpy as np
 import torch
 from typing_extensions import override
 from torch.utils.data import DataLoader, Dataset, IterableDataset, RandomSampler, SequentialSampler
-from llamafactory.extras import logging
 from llamafactory.extras.constants import IGNORE_INDEX
 from llamafactory.extras.packages import is_transformers_version_greater_than
 from llamafactory.train.callbacks import SaveProcessorCallback
@@ -160,14 +159,7 @@ if TYPE_CHECKING:
     from transformers.trainer import PredictionOutput
 
     from llamafactory.hparams import FinetuningArguments
-
-import logging
-import sys
-logging.basicConfig(level=logging.INFO)
-handler = logging.StreamHandler(sys.stdout)
-logger = logging.getLogger(__name__)
-logger.addHandler(handler)
-
+from dataflex.utils.logging import logger
 
 if is_peft_available():
     from peft import PeftModel
