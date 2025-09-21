@@ -62,10 +62,10 @@ def patch_trainer(train_type: str):
     Monkey-patch LlamaFactory's CustomSeq2SeqTrainer based on train_type.
 
     Args:
-        train_type (str): Must be one of ["static", "dynamic_select", "dynamic_mix", "dynamic_weighting"].
+        train_type (str): Must be one of ["static", "dynamic_select", "dynamic_mix", "dynamic_weight"].
                           Determines which trainer class to inject.
     """
-    valid_types = ["static", "dynamic_select", "dynamic_mix", "dynamic_weighting"]
+    valid_types = ["static", "dynamic_select", "dynamic_mix", "dynamic_weight"]
     if train_type not in valid_types:
         raise ValueError(f"Invalid train_type '{train_type}'. Must be one of {valid_types}.")
 
@@ -75,10 +75,9 @@ def patch_trainer(train_type: str):
     elif train_type == "dynamic_mix":
         from dataflex.train.trainer.mix_trainer import MixTrainer
         TrainerCls = MixTrainer
-    elif train_type == "dynamic_weighting":
-        # 还没写完
-        from dataflex.train.trainer.weighting_training import WeightingTrainer
-        TrainerCls = WeightingTrainer
+    elif train_type == "dynamic_weight":
+        from dataflex.train.trainer.weight_trainer import WeightTrainer
+        TrainerCls = WeightTrainer
     else:  # static
         TrainerCls = None
 

@@ -2,10 +2,8 @@ from dataflex.core.registry import register_weighter
 from dataflex.utils.logging import logger
 from typing import Any, Union
 from torch import nn
-from transformers.trainer_utils import is_sagemaker_mp_enabled
-from transformers.trainer_pt_utils import smp_forward_backward
-from transformers.integrations import DistributedType
-from transformers.optimization import OptimizerNames
+from accelerate.utils import DistributedType
+from transformers.training_args import OptimizerNames
 from transformers.utils import is_apex_available
 if is_apex_available():
     from apex import amp
@@ -16,12 +14,9 @@ import torch.distributed as dist
 @register_weighter('loss')
 class LossWeighter:
     """
-    可扩展的加权器：
-    - 保持 training_step 在 weighter 里：拿得到 ctx(Trainer-like)、model、inputs，方便未来实现基于梯度/激活等信号的加权。
-    - get_weighted_loss 严格按参考流程：gather→normalize→strategy→exp→softmax→slice(local)→sum×world_size。
+    参考论文
+    Dynamic Loss-Based Sample Reweighting for Improved Large Language Model Pretraining (ICLR2025)
     """
-
-    # ====== 配置 ======
     def __init__(
         self,
         strategy: str = "linupper",
@@ -57,7 +52,25 @@ class LossWeighter:
         else:
             raise NotImplementedError(f"Unknown strategy: {s}")
 
-    # ====== 关键：分布式加权（严格按参考顺序） ======
+    def _brief(x):
+        if torch.is_tensor(x):
+            if x.dim() == 0:
+                return float(x.detach().cpu())
+            else:
+                return x.detach().float().cpu()[:5].tolist()
+        return x
+    
+    def _per_sample_loss_from_logits(self, logits, labels, ignore_index: int = -100):
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
+        num_active = (shift_labels != ignore_index).sum(dim=1)  # (B,)
+        loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
+        tok_loss = loss_fct(
+            shift_logits.view(-1, shift_logits.size(-1)),
+            shift_labels.view(-1).long()
+        )
+        return tok_loss.view(shift_logits.size(0), -1).sum(dim=1) / torch.clamp(num_active, min=1)
+
     def get_weighted_loss(
         self,
         losses: torch.Tensor,
@@ -122,72 +135,66 @@ class LossWeighter:
         # 4) 本卡加权并 × world_size（保持与参考实现一致）
         return torch.sum(device_weights * device_losses) * world_size
 
-    # ====== 保持“HF 版 training_step 流程”，但放在 weighter 里 ======
-    # 这样未来你可以在 weighter 内部获取 model/ctx/inputs 做更复杂的加权（如基于梯度等）
-    def training_step(
-        self,
-        ctx: Any,  # 必传：HF Trainer 或具有相同接口的上下文
-        model: nn.Module,
-        inputs: dict[str, Union[torch.Tensor, Any]],
-        num_items_in_batch=None,
-    ) -> torch.Tensor:
-        """
-        与你现有的 training_step 结构对齐：外部调用 + 内部调用 get_weighted_loss。
-        只有在 loss 是向量时才进行分布式加权；否则保持原逻辑。
-        """
-        logger.info(f"[Datafex] Using WeightTrainer.training_step (weighter-owned)")
-
+    def training_step(self, ctx, model, inputs, num_items_in_batch=None, use_weighter=False):
         model.train()
         if hasattr(ctx.optimizer, "train") and callable(ctx.optimizer.train):
             ctx.optimizer.train()
 
         inputs = ctx._prepare_inputs(inputs)
 
-        # SageMaker MP 分支：保持原样（一般难以做逐样本加权）
-        if is_sagemaker_mp_enabled():
-            loss_mb = smp_forward_backward(model, inputs, ctx.args.gradient_accumulation_steps)
-            return loss_mb.reduce_mean().detach().to(ctx.args.device)
+        # 预先保存一份 labels（防止某些实现里被 pop 掉）
+        labels_for_weighter = inputs.get("labels", None)
 
-        # 前向 & 计算 loss（可能是标量，可能是 per-sample 向量，取决于你的 compute_loss 实现）
         with ctx.compute_loss_context_manager():
-            loss = ctx.compute_loss(model, inputs, num_items_in_batch=num_items_in_batch)
+            # 关键：拿到 outputs
+            loss, outputs = ctx.compute_loss(
+                model, inputs, num_items_in_batch=num_items_in_batch, return_outputs=True
+            )
 
-        # 在 weighter 里做分布式加权（仅当 loss 是向量）
-        # 输出前5个loss在加权前后的变化情况（只在主进程中输出）
-        if ctx.args.local_rank in [-1, 0]:
-            logger.info(f"[Datafex] Before weighting, loss[:5]: {loss[:5] if torch.is_tensor(loss) and loss.dim()>0 else loss}")
-        loss = self.get_weighted_loss(loss, ctx=ctx, model=model, inputs=inputs)
-        if ctx.args.local_rank in [-1, 0]:
-            logger.info(f"[Datafex] After weighting, loss[:5]: {loss[:5] if torch.is_tensor(loss) and loss.dim()>0 else loss}")
+        if use_weighter:
+            # 1) 如果 compute_loss 已经返回的是 (B,) 向量，直接用
+            if torch.is_tensor(loss) and loss.dim() == 1:
+                per_sample = loss
+            else:
+                # 2) 否则用 logits+labels 现场算每样本 loss（不需要二次前向）
+                logits = getattr(outputs, "logits", None) if outputs is not None else None
+                labels = inputs.get("labels", None)
+                if labels is None:
+                    labels = labels_for_weighter
+                per_sample = None
+                if logits is not None and labels is not None:
+                    per_sample = self._per_sample_loss_from_logits(logits, labels)
 
-        # 清理
+            if per_sample is not None:
+                # 日志仅主进程打
+                if ctx.args.local_rank in [-1, 0]:
+                    ps = per_sample.detach().float().cpu().view(-1)[0]
+                    logger.info(f"[Datafex] Before weighting per-sample (first sample): {ps}")
+                # 分布式加权（你的 get_weighted_loss 实现）
+                loss = self.get_weighted_loss(per_sample, ctx=ctx, model=model, inputs=inputs)
+                if ctx.args.local_rank in [-1, 0]:
+                    logger.info(f"[Datafex] After weighting (first sample): {float(loss.detach().cpu())}")
+            else:
+                if ctx.args.local_rank in [-1, 0]:
+                    logger.info("[Datafex] Could not form per-sample losses; fallback to scalar loss (no reweight).")
+
         del inputs
 
-        # empty cache
         if ctx.args.torch_empty_cache_steps is not None and ctx.state.global_step % ctx.args.torch_empty_cache_steps == 0:
             ctx._empty_cache()
 
         kwargs = {}
-
-        # LOMO/ADALOMO
-        if ctx.args.optim in [OptimizerNames.LOMO, OptimizerNames.ADALOMO]:
-            kwargs["learning_rate"] = ctx._get_learning_rate()
-
-        # 多卡场景：保持原有写法（对标量无影响；对我们这里的标量同样无影响）
         if ctx.args.n_gpu > 1:
             loss = loss.mean()
 
-        # 反传（AMP/Accelerate/Deepspeed 逻辑保持一致）
         if getattr(ctx, "use_apex", False):
             with amp.scale_loss(loss, ctx.optimizer) as scaled_loss:
                 scaled_loss.backward()
         else:
-            if not getattr(ctx, "model_accepts_loss_kwargs", False) and getattr(ctx, "compute_loss_func", None) is None:
-                loss = loss / ctx.args.gradient_accumulation_steps
-
+            # 注意：尽量按“本次实际累积的 micro-batches 数”来除，如果你已经做了这类修正，请对应替换这里的除数
+            loss = loss / ctx.args.gradient_accumulation_steps
             if ctx.accelerator.distributed_type == DistributedType.DEEPSPEED:
                 kwargs["scale_wrt_gas"] = False
-
             ctx.accelerator.backward(loss, **kwargs)
 
         return loss.detach()

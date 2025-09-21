@@ -256,74 +256,6 @@ class WeightTrainer(CustomSeq2SeqTrainer):
         logger.info(f"[WeightTrainer] weighter={name}, params={sel_params}")
         logger.info("[Dataflex] WeightTrainer initialized")
 
-    @override
-    def _get_train_sampler(self, train_dataset) -> Optional[torch.utils.data.Sampler]:
-        if self.finetuning_args.disable_shuffling:
-            return torch.utils.data.SequentialSampler(train_dataset)
-        if train_dataset is None or not has_length(train_dataset):
-            return None
-
-        # Build the sampler.
-        if self.args.group_by_length:
-            if is_datasets_available() and isinstance(train_dataset, datasets.Dataset):
-                lengths = (
-                    train_dataset[self.args.length_column_name]
-                    if self.args.length_column_name in train_dataset.column_names
-                    else None
-                )
-            else:
-                lengths = None
-            model_input_name = (
-                self.processing_class.model_input_names[0] if self.processing_class is not None else None
-            )
-            return LengthGroupedSampler(
-                self.args.train_batch_size * self.args.gradient_accumulation_steps,
-                dataset=train_dataset,
-                lengths=lengths,
-                model_input_name=model_input_name,
-            )
-
-        else:
-            return RandomSampler(train_dataset)
-
-    @override
-    def get_train_dataloader(self, indices: Optional[List[int]] = None) -> DataLoader:
-        """
-        返回训练 DataLoader。
-        如果传入 indices，则在 train_dataset 上构造子集 DataLoader。
-        """
-        if self.train_dataset is None:
-            raise ValueError("Trainer: training requires a train_dataset.")
-
-        train_dataset = self.train_dataset
-        if indices is not None:
-            train_dataset = torch.utils.data.Subset(train_dataset, indices)
-        # print(len(train_dataset))
-        data_collator = self.data_collator
-        if is_datasets_available() and isinstance(train_dataset, datasets.Dataset):
-            train_dataset = self._remove_unused_columns(train_dataset, description="training")
-        else:
-            data_collator = self._get_collator_with_removed_columns(data_collator, description="training")
-        
-        self.weighter.data_collator = data_collator
-
-        dataloader_params = {
-            "batch_size": self._train_batch_size,
-            "collate_fn": data_collator,
-            "num_workers": self.args.dataloader_num_workers,
-            "pin_memory": self.args.dataloader_pin_memory,
-            "persistent_workers": self.args.dataloader_persistent_workers,
-        }
-
-        if not isinstance(train_dataset, torch.utils.data.IterableDataset):
-            dataloader_params["sampler"] = self._get_train_sampler(train_dataset)
-            dataloader_params["drop_last"] = self.args.dataloader_drop_last
-            dataloader_params["worker_init_fn"] = seed_worker
-            dataloader_params["prefetch_factor"] = self.args.dataloader_prefetch_factor
-
-        return self.accelerator.prepare(DataLoader(train_dataset, **dataloader_params))
-
-    
     # 这个函数也是分别在每个gpu上执行的
     @override
     def _inner_training_loop(
@@ -561,12 +493,10 @@ class WeightTrainer(CustomSeq2SeqTrainer):
             self._evaluate(trial, ignore_keys_for_eval, skip_scheduler=True)
 
         # 放弃epoch逻辑，相当于只训练一个epoch，通过step来训练
-        current_dataloader = train_dataloader
         epoch = 0
         if self.state.global_step < self.finetuning_args.warmup_step:
             logger.info("[Dataflex] Model warmup in progress...")
-        # if hasattr(current_dataloader, "set_epoch"):
-        #     current_dataloader.set_epoch(epoch)
+
         
         # Reset the past mems state at the beginning of each epoch if necessary.
         if args.past_index >= 0:
@@ -581,13 +511,13 @@ class WeightTrainer(CustomSeq2SeqTrainer):
         rng_to_sync = False
         steps_skipped = 0
         if steps_trained_in_current_epoch > 0:
-            current_dataloader = skip_first_batches(current_dataloader, steps_trained_in_current_epoch)
+            train_dataloader = skip_first_batches(train_dataloader, steps_trained_in_current_epoch)
             steps_skipped = steps_trained_in_current_epoch
             steps_trained_in_current_epoch = 0
             rng_to_sync = True
 
         step = -1
-        current_iterator = iter(current_dataloader)
+        current_iterator = iter(train_dataloader)
         # We chunkify the epoch iterator into gradient accumulation steps `n` batches
         remainder = num_examples % args.gradient_accumulation_steps
         if remainder == 0:
@@ -658,9 +588,9 @@ class WeightTrainer(CustomSeq2SeqTrainer):
                     and self.accelerator.distributed_type != DistributedType.DEEPSPEED
                     else contextlib.nullcontext  # 否则不使用同步
                 )
-                
+                use_weighter = (self.state.global_step >= self.finetuning_args.warmup_step)  # 是否使用weighter进行加权训练
                 with context():  # 在非同步上下文中进行训练
-                    tr_loss_step = self.training_step(self, model, inputs, num_items_in_batch)  # 执行一次训练步骤，返回该步的损失值
+                    tr_loss_step = self.weighter.training_step(self, model, inputs, num_items_in_batch, use_weighter)  # 执行一次训练步骤，返回该步的损失值
 
                 # 检查损失是否为NaN或Infinity，如果是，使用之前的损失值替代
                 if (
