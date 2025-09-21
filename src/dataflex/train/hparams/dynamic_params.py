@@ -538,11 +538,15 @@ class DynamicFinetuningArguments(
     )
     update_step: int = field(
         default=0,
-        metadata={"help": "Update steps for dynamic training"},
+        metadata={"help": "Update steps for dynamic select or mix training"},
     )
     update_times: int = field(
         default=1,
-        metadata={"help": "Total update times during the whole dynamic training progress"},
+        metadata={"help": "Total update times during the whole dynamic training progress for dynamic select or mix training"},
+    )
+    weighting_step: int = field(
+        default=0,
+        metadata={"help": "Only used in dynamic weight trainer. Weighting steps for dynamic weighting training"},
     )
 
     def __post_init__(self):

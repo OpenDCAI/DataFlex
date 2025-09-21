@@ -142,7 +142,7 @@ from transformers.utils.quantization_config import QuantizationMethod
 
 from dataflex.utils.load_component import load_component
 from dataflex.core.registry import REGISTRY
-import dataflex.train.selector
+import dataflex.train.weighter
 
 TRAINING_ARGS_NAME = "training_args.bin"
 TRAINER_STATE_NAME = "trainer_state.json"
@@ -231,14 +231,14 @@ else:
     IS_XLA_FSDPV2_POST_2_2 = False
 
 
-class SelectTrainer(CustomSeq2SeqTrainer):
+class WeightTrainer(CustomSeq2SeqTrainer):
     def __init__(self, finetuning_args, processor=None, gen_kwargs=None, **kwargs):
         # 初始化父类
         super().__init__(finetuning_args=finetuning_args, processor=processor, gen_kwargs=gen_kwargs, **kwargs)
         name = finetuning_args.component_name
-        # 取该 selector 的 params（可替换 ${output_dir}）
+        # 取该 weighter 的 params（可替换 ${output_dir}）
         sel_params = load_component(
-            'selectors',
+            'weighters',
             finetuning_args.components_cfg_file,
             name,
             runtime_vars={}
@@ -253,77 +253,9 @@ class SelectTrainer(CustomSeq2SeqTrainer):
         )
 
         # 实例化（无任何 if/else）
-        self.selector = REGISTRY.build("selector", name, runtime=runtime, cfg=sel_params)
-        logger.info(f"[SelectTrainer] selector={name}, params={sel_params}")
-        logger.info("[Dataflex] SelectTrainer initialized")
-
-    @override
-    def _get_train_sampler(self, train_dataset) -> Optional[torch.utils.data.Sampler]:
-        if self.finetuning_args.disable_shuffling:
-            return torch.utils.data.SequentialSampler(train_dataset)
-        if train_dataset is None or not has_length(train_dataset):
-            return None
-
-        # Build the sampler.
-        if self.args.group_by_length:
-            if is_datasets_available() and isinstance(train_dataset, datasets.Dataset):
-                lengths = (
-                    train_dataset[self.args.length_column_name]
-                    if self.args.length_column_name in train_dataset.column_names
-                    else None
-                )
-            else:
-                lengths = None
-            model_input_name = (
-                self.processing_class.model_input_names[0] if self.processing_class is not None else None
-            )
-            return LengthGroupedSampler(
-                self.args.train_batch_size * self.args.gradient_accumulation_steps,
-                dataset=train_dataset,
-                lengths=lengths,
-                model_input_name=model_input_name,
-            )
-
-        else:
-            return RandomSampler(train_dataset)
-
-    @override
-    def get_train_dataloader(self, indices: Optional[List[int]] = None) -> DataLoader:
-        """
-        返回训练 DataLoader。
-        如果传入 indices，则在 train_dataset 上构造子集 DataLoader。
-        """
-        if self.train_dataset is None:
-            raise ValueError("Trainer: training requires a train_dataset.")
-
-        train_dataset = self.train_dataset
-        if indices is not None:
-            train_dataset = torch.utils.data.Subset(train_dataset, indices)
-        # print(len(train_dataset))
-        data_collator = self.data_collator
-        if is_datasets_available() and isinstance(train_dataset, datasets.Dataset):
-            train_dataset = self._remove_unused_columns(train_dataset, description="training")
-        else:
-            data_collator = self._get_collator_with_removed_columns(data_collator, description="training")
-        
-        self.selector.data_collator = data_collator
-
-        dataloader_params = {
-            "batch_size": self._train_batch_size,
-            "collate_fn": data_collator,
-            "num_workers": self.args.dataloader_num_workers,
-            "pin_memory": self.args.dataloader_pin_memory,
-            "persistent_workers": self.args.dataloader_persistent_workers,
-        }
-
-        if not isinstance(train_dataset, torch.utils.data.IterableDataset):
-            dataloader_params["sampler"] = self._get_train_sampler(train_dataset)
-            dataloader_params["drop_last"] = self.args.dataloader_drop_last
-            dataloader_params["worker_init_fn"] = seed_worker
-            dataloader_params["prefetch_factor"] = self.args.dataloader_prefetch_factor
-
-        return self.accelerator.prepare(DataLoader(train_dataset, **dataloader_params))
-
+        self.weighter = REGISTRY.build("weighter", name, runtime=runtime, cfg=sel_params)
+        logger.info(f"[Dataflex] weighter={name}, params={sel_params}")
+        logger.info("[Dataflex] WeightTrainer initialized")
 
     # 这个函数也是分别在每个gpu上执行的
     @override
@@ -358,11 +290,10 @@ class SelectTrainer(CustomSeq2SeqTrainer):
         # 这个是global batch size
         total_train_batch_size = self._train_batch_size * args.gradient_accumulation_steps * args.world_size
 
+        # warmup不换dataloaer，直接通过step去控制
         logger.info(f"[Dataflex] Dynamic training mode")
-        total_warmup_samples = total_train_batch_size * self.finetuning_args.warmup_step
-        logger.info(f"[Dataflex] Warmup step {self.finetuning_args.warmup_step}, warmup samples: {total_warmup_samples} in total")
-        warmup_indices = self.selector.warmup(total_warmup_samples, replacement=True)
-        train_dataloader = self.get_train_dataloader(warmup_indices)
+        logger.info(f"[Dataflex] Warmup step {self.finetuning_args.warmup_step}")
+        train_dataloader = self.get_train_dataloader()
 
         if self.is_fsdp_xla_v2_enabled:
             train_dataloader = tpu_spmd_dataloader(train_dataloader)
@@ -375,7 +306,7 @@ class SelectTrainer(CustomSeq2SeqTrainer):
             len_dataloader, # 等于数据集长度/worldsize/micro_batchsize
             max_steps,
         ) = self.set_initial_training_values(args, train_dataloader, total_train_batch_size)
-        max_steps = (self.finetuning_args.warmup_step + self.finetuning_args.update_step * self.finetuning_args.update_times)
+        max_steps = (self.finetuning_args.warmup_step + self.finetuning_args.weighting_step)
         epoch_based = False
         logger.info(f"[Dataflex]Set max train steps to {max_steps}")
         logger.info(f"[Dataflex]Set epoch_based = False")
@@ -563,12 +494,10 @@ class SelectTrainer(CustomSeq2SeqTrainer):
             self._evaluate(trial, ignore_keys_for_eval, skip_scheduler=True)
 
         # 放弃epoch逻辑，相当于只训练一个epoch，通过step来训练
-        current_dataloader = train_dataloader
         epoch = 0
         if self.state.global_step < self.finetuning_args.warmup_step:
             logger.info("[Dataflex] Model warmup in progress...")
-        # if hasattr(current_dataloader, "set_epoch"):
-        #     current_dataloader.set_epoch(epoch)
+
         
         # Reset the past mems state at the beginning of each epoch if necessary.
         if args.past_index >= 0:
@@ -583,13 +512,13 @@ class SelectTrainer(CustomSeq2SeqTrainer):
         rng_to_sync = False
         steps_skipped = 0
         if steps_trained_in_current_epoch > 0:
-            current_dataloader = skip_first_batches(current_dataloader, steps_trained_in_current_epoch)
+            train_dataloader = skip_first_batches(train_dataloader, steps_trained_in_current_epoch)
             steps_skipped = steps_trained_in_current_epoch
             steps_trained_in_current_epoch = 0
             rng_to_sync = True
 
         step = -1
-        current_iterator = iter(current_dataloader)
+        current_iterator = iter(train_dataloader)
         # We chunkify the epoch iterator into gradient accumulation steps `n` batches
         remainder = num_examples % args.gradient_accumulation_steps
         if remainder == 0:
@@ -660,9 +589,9 @@ class SelectTrainer(CustomSeq2SeqTrainer):
                     and self.accelerator.distributed_type != DistributedType.DEEPSPEED
                     else contextlib.nullcontext  # 否则不使用同步
                 )
-                
+                use_weighter = (self.state.global_step >= self.finetuning_args.warmup_step)  # 是否使用weighter进行加权训练
                 with context():  # 在非同步上下文中进行训练
-                    tr_loss_step = self.training_step(model, inputs, num_items_in_batch)  # 执行一次训练步骤，返回该步的损失值
+                    tr_loss_step = self.weighter.training_step(self, model, inputs, num_items_in_batch, use_weighter)  # 执行一次训练步骤，返回该步的损失值
 
                 # 检查损失是否为NaN或Infinity，如果是，使用之前的损失值替代
                 if (
@@ -742,41 +671,6 @@ class SelectTrainer(CustomSeq2SeqTrainer):
                         start_time,
                         # learning_rate=learning_rate,
                     )
-
-                    # 动态训练更新
-                    if (
-                        self.state.global_step < max_steps and (
-                        self.state.global_step == self.finetuning_args.warmup_step or
-                        (self.state.global_step > self.finetuning_args.warmup_step and
-                        (self.state.global_step - self.finetuning_args.warmup_step) % self.finetuning_args.update_step == 0))
-                    ):
-                        self.accelerator.wait_for_everyone()
-                        torch.cuda.empty_cache()
-                        if dist.is_initialized():
-                            dist.barrier()
-
-                        current_update_times = (self.state.global_step - self.finetuning_args.warmup_step) // self.finetuning_args.update_step + 1
-                        logger.info(f"[Dataflex] Model training paused, starting the {current_update_times}th dynamic data selection...")
-                        # 这里传一些特定的selector参数
-                        extra_args = dict(
-                            optimizer_state=self.optimizer.state,
-                            scheduler_state=self.lr_scheduler.state_dict(),
-                            current_update_times=current_update_times,
-                            update_times=self.finetuning_args.update_times
-                        )
-                        new_indices = self.selector.select(
-                            model=model,
-                            step_id=self.state.global_step,
-                            num_samples=total_train_batch_size * self.finetuning_args.update_step,
-                            **extra_args
-                        )
-
-                        # 每个进程根据 local_indices 构造 dataloader
-                        train_loader = self.get_train_dataloader(indices=new_indices)
-                        current_iterator = iter(train_loader)
-
-                        if self.accelerator.is_main_process:
-                            logger.info(f"[Dataflex] Updated dataloader at step {self.state.global_step}, {len(new_indices)} samples in total.")
 
                 else:
                     self.control = self.callback_handler.on_substep_end(args, self.state, self.control)

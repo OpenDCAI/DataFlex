@@ -24,3 +24,16 @@ selectors:
     name: custom
     params:
       cache_dir: ../dataflex_saves/custom_output
+
+mixers:
+  random:
+    name: random
+    params:
+      seed: 42
+
+weighters:
+  loss:
+    name: loss
+    params:
+      strategy: linupper # choices: [linupper, uniform, quadratic, extremes]
+      delta: 1.0
