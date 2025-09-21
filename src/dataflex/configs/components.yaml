@@ -24,3 +24,10 @@ selectors:
     name: custom
     params:
       cache_dir: ../dataflex_saves/custom_output
+
+weighters:
+  loss_weighter:
+    name: loss_weighter
+    params:
+      strategy: linupper # choices: [linupper, uniform, quadratic, extreme]
+      delta: 1.0
