@@ -23,6 +23,10 @@ class LossWeighter:
         delta: float = 1.0,
     ):
         self.strategy = strategy
+        allowed = {"linupper", "uniform", "quadratic", "extremes"}
+        if strategy not in allowed:
+            raise ValueError(f"strategy must be one of {allowed}, but got '{strategy}'")
+
         self.delta = float(delta)
         self.r = 1
 

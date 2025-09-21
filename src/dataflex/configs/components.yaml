@@ -35,5 +35,5 @@ weighters:
   loss:
     name: loss
     params:
-      strategy: fuck # choices: [linupper, uniform, quadratic, extreme]
+      strategy: linupper # choices: [linupper, uniform, quadratic, extremes]
       delta: 1.0
