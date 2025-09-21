@@ -1,5 +1,5 @@
 ### model
-model_name_or_path: /jizhicfs/hymiezhao/models/Llama-3.1-8B
+model_name_or_path: meta-llama/Llama-3.1-8B
 trust_remote_code: true
 
 ### method
@@ -25,7 +25,7 @@ dataloader_num_workers: 0
 seed: 42
 
 ### output
-output_dir: /jizhicfs/hymiezhao/zzy/dataflex_saves/llama3.1_8b/four_train2mmlu/lora_mid_loss_result
+output_dir: ../dataflex_saves/Llama-3.1-8B/delta_loss_result
 logging_steps: 10
 save_steps: 100
 plot_loss: true

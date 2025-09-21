@@ -1,4 +1,5 @@
 from dataflex.core.registry import register_selector
+from dataflex.utils.selector_io import load_cached_selection, save_selection
 from .base_selector import Selector
 from dataflex.utils.logging import logger
 import torch
@@ -14,7 +15,6 @@ import glob # 用于文件查找
 
 # NEW: IndexedDataset Wrapper
 class IndexedDataset(Dataset):
-    """一个包装类，用于在返回样本的同时返回其索引。"""
     def __init__(self, original_dataset):
         self.original_dataset = original_dataset
 
@@ -281,6 +281,23 @@ class LessSelector(Selector):
         """
         选择得分最高的 num_samples 个样本。
         """
+
+        # 有无存储的step顺序
+        os.makedirs(self.cache_dir, exist_ok=True)
+        save_path = os.path.join(self.cache_dir, f"step_{step_id}.json")
+        if os.path.exists(save_path):
+            if self.accelerator.is_main_process:
+                cached_indices, _ = load_cached_selection(save_path)
+            else:
+                cached_indices = None
+            cached_indices_list = [cached_indices]
+            if dist.is_available() and dist.is_initialized():
+                dist.broadcast_object_list(cached_indices_list, src=0)
+                cached_indices = cached_indices_list[0]
+            else:
+                cached_indices = cached_indices or []
+            return cached_indices
+
         now_train_save_dir = os.path.join(self.cache_dir, "train", str(step_id))
         now_eval_save_dir = os.path.join(self.cache_dir, "eval", str(step_id))
         
@@ -320,8 +337,11 @@ class LessSelector(Selector):
 
             logger.info(f"Selecting top {num_samples} samples from {len(train_eval_similarities)}.")
         
-            with open(os.path.join(self.cache_dir, str(self.step_id) + "step_selected_indices.json"), "w") as f:
-                json.dump({"selected_indices": selected_indices}, f)
+            # ========= 4) 保存（只保存“被选中的 indices + 对应 metric”） =========
+            metric_payload = {
+                "train_eval_similarity": [float(train_eval_similarities[i].item()) for i in selected_indices]
+            }
+            save_selection(save_path, selected_indices, metric_payload, self.accelerator)
         else:
             selected_indices = None
 
@@ -332,31 +352,3 @@ class LessSelector(Selector):
         selected_indices = obj_list[0]
 
         return selected_indices
-
-    def random_select(self, num_samples: int, replacement: bool = False) -> List[int]:
-        """
-        随机选择样本，作为 warmup 或 baseline.
-        """
-        if self.accelerator.is_main_process:
-            dataset_size = len(self.dataset)
-            gen = torch.Generator()
-            gen.manual_seed(self.seed)
-
-            if replacement:
-                full_indices = torch.randint(
-                    low=0, high=dataset_size, size=(num_samples,), generator=gen
-                ).tolist()
-            else:
-                if num_samples > dataset_size:
-                    raise ValueError(
-                        f"Cannot sample {num_samples} without replacement from {dataset_size} samples"
-                    )
-                full_indices = torch.randperm(dataset_size, generator=gen)[:num_samples].tolist()
-        else:
-            full_indices = None
-
-        obj_list = [full_indices]
-        if dist.is_initialized():
-            dist.broadcast_object_list(obj_list, src=0)
-        
-        return obj_list[0]
