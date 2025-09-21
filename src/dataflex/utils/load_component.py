@@ -1,13 +1,13 @@
 import yaml
 from typing import Dict, Any, Optional
 
-def load_component(cfg_file: str, name: str, runtime_vars: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+def load_component(type: str, cfg_file: str, name: str, runtime_vars: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     with open(cfg_file, "r", encoding="utf-8") as f:
         root = yaml.safe_load(f) or {}
-    bucket = (root.get("selectors") or {})
+    bucket = (root.get(type) or {})
     if name not in bucket:
         available = ", ".join(sorted(bucket.keys()))
-        raise ValueError(f"selector '{name}' not found. Available: {available}")
+        raise ValueError(f"{type} '{name}' not found. Available: {available}")
     params = dict(bucket[name].get("params") or {})
 
     # 简单占位替换（如 ${output_dir}）

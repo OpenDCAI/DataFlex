@@ -238,6 +238,7 @@ class WeightTrainer(CustomSeq2SeqTrainer):
         name = finetuning_args.component_name
         # 取该 weighter 的 params（可替换 ${output_dir}）
         sel_params = load_component(
+            'weighters',
             finetuning_args.components_cfg_file,
             name,
             runtime_vars={}
@@ -253,7 +254,7 @@ class WeightTrainer(CustomSeq2SeqTrainer):
 
         # 实例化（无任何 if/else）
         self.weighter = REGISTRY.build("weighter", name, runtime=runtime, cfg=sel_params)
-        logger.info(f"[WeightTrainer] weighter={name}, params={sel_params}")
+        logger.info(f"[Dataflex] weighter={name}, params={sel_params}")
         logger.info("[Dataflex] WeightTrainer initialized")
 
     # 这个函数也是分别在每个gpu上执行的

@@ -238,6 +238,7 @@ class SelectTrainer(CustomSeq2SeqTrainer):
         name = finetuning_args.component_name
         # 取该 selector 的 params（可替换 ${output_dir}）
         sel_params = load_component(
+            'selectors',
             finetuning_args.components_cfg_file,
             name,
             runtime_vars={}

@@ -118,13 +118,13 @@ def get_dataset(
 
     # 打印初始比例配置
     logger.info_rank0(f"[Dataflex] sample_rule={data_args.mixture_sample_rule} | "
-                        f"proportions={data_args.mixture_proportions} | "
+                        f"proportions={data_args.initial_mixture_proportions} | "
                         f"seed={training_args.seed}")
 
     manager = MixedProportionManager(
         per_source=per_source_pp,
         sample_rule=data_args.mixture_sample_rule,
-        proportions=data_args.mixture_proportions,
+        proportions=data_args.initial_mixture_proportions,
         seed=training_args.seed,
         logger=logger,
     )

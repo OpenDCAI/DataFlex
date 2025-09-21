@@ -1,1 +1,1 @@
-from .loss_weighter import LossWeighter
+from .loss_weighter import *

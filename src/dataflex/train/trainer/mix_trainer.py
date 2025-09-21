@@ -140,7 +140,9 @@ from transformers.utils import (
 from transformers.utils.deprecation import deprecate_kwarg
 from transformers.utils.quantization_config import QuantizationMethod
 
-from ..mixer.random_mixer import RandomMixer
+from dataflex.utils.load_component import load_component
+from dataflex.core.registry import REGISTRY
+import dataflex.train.mixer
 
 TRAINING_ARGS_NAME = "training_args.bin"
 TRAINER_STATE_NAME = "trainer_state.json"
@@ -235,7 +237,26 @@ class MixTrainer(CustomSeq2SeqTrainer):
         # 初始化父类
         self.mixture_manager = kwargs.pop("mixture_manager", None)
         super().__init__(finetuning_args=finetuning_args, processor=processor, gen_kwargs=gen_kwargs, **kwargs)
-        self.mixer = RandomMixer(mixture_manager=self.mixture_manager)
+        name = finetuning_args.component_name
+        # 取该 mixer 的 params（可替换 ${output_dir}）
+        sel_params = load_component(
+            'mixers',
+            finetuning_args.components_cfg_file,
+            name,
+            runtime_vars={}
+        )
+
+        # 统一提供“动态运行期依赖”，静态类会自动忽略
+        runtime = dict(
+            dataset=self.train_dataset,
+            eval_dataset=self.eval_dataset,
+            accelerator=self.accelerator,
+            data_collator=self.data_collator,
+        )
+
+        # 实例化（无任何 if/else）
+        self.mixer = REGISTRY.build("mixer", name, runtime=runtime, cfg=sel_params)
+        logger.info(f"[Dataflex] mixer={name}, params={sel_params}")
         logger.info("[Dataflex] MixTrainer initialized")
 
     @override

@@ -142,9 +142,9 @@ class DataArguments:
         default=None,
         metadata={"help": "Rule to sample from per-source datasets, e.g. 'proportional', 'fixed'."},
     )
-    mixture_proportions: Optional[list[float]] = field(
+    init_mixture_proportions: Optional[list[float]] = field(
         default=None,
-        metadata={"help": "Proportions for sampling from each dataset in mixture."},
+        metadata={"help": "Initial proportions for sampling from each dataset in mixture."},
     )
 
 
