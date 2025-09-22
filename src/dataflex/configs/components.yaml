@@ -1,5 +1,6 @@
 # configs/components.yaml
 selectors:
+  # 动态数据选择器
   less:
     name: less
     params:
@@ -26,12 +27,14 @@ selectors:
       cache_dir: ../dataflex_saves/custom_output
 
 mixers:
+  # 动态数据混合器
   random:
     name: random
     params:
       seed: 42
 
 weighters:
+  # 动态数据加权器
   loss:
     name: loss
     params:

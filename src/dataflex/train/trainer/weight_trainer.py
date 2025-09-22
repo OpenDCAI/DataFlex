@@ -306,7 +306,7 @@ class WeightTrainer(CustomSeq2SeqTrainer):
             len_dataloader, # 等于数据集长度/worldsize/micro_batchsize
             max_steps,
         ) = self.set_initial_training_values(args, train_dataloader, total_train_batch_size)
-        max_steps = (self.finetuning_args.warmup_step + self.finetuning_args.weighting_step)
+        max_steps = self.finetuning_args.train_step
         epoch_based = False
         logger.info(f"[Dataflex]Set max train steps to {max_steps}")
         logger.info(f"[Dataflex]Set epoch_based = False")

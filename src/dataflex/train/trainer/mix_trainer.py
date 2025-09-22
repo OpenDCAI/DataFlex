@@ -237,26 +237,29 @@ class MixTrainer(CustomSeq2SeqTrainer):
         # 初始化父类
         self.mixture_manager = kwargs.pop("mixture_manager", None)
         super().__init__(finetuning_args=finetuning_args, processor=processor, gen_kwargs=gen_kwargs, **kwargs)
-        name = finetuning_args.component_name
-        # 取该 mixer 的 params（可替换 ${output_dir}）
-        sel_params = load_component(
-            'mixers',
-            finetuning_args.components_cfg_file,
-            name,
-            runtime_vars={}
-        )
-        sel_params["mixture_manager"] = self.mixture_manager
-        # 统一提供“动态运行期依赖”，静态类会自动忽略
-        runtime = dict(
-            dataset=self.train_dataset,
-            eval_dataset=self.eval_dataset,
-            accelerator=self.accelerator,
-            data_collator=self.data_collator,
-        )
+        if self.finetuning_args.static_mix == False:
+            name = finetuning_args.component_name
+            # 取该 mixer 的 params（可替换 ${output_dir}）
+            sel_params = load_component(
+                'mixers',
+                finetuning_args.components_cfg_file,
+                name,
+                runtime_vars={}
+            )
+            sel_params["mixture_manager"] = self.mixture_manager
+            # 统一提供“动态运行期依赖”，静态类会自动忽略
+            runtime = dict(
+                dataset=self.train_dataset,
+                eval_dataset=self.eval_dataset,
+                accelerator=self.accelerator,
+                data_collator=self.data_collator,
+            )
 
-        # 实例化（无任何 if/else）
-        self.mixer = REGISTRY.build("mixer", name, runtime=runtime, cfg=sel_params)
-        logger.info(f"[Dataflex] mixer={name}, params={sel_params}")
+            # 实例化（无任何 if/else）
+            self.mixer = REGISTRY.build("mixer", name, runtime=runtime, cfg=sel_params)
+            logger.info(f"[Dataflex] mixer={name}, params={sel_params}")
+        else:
+            logger.info(f"[Dataflex] Using static mix proportions during training.")
         logger.info("[Dataflex] MixTrainer initialized")
 
     @override
@@ -306,7 +309,8 @@ class MixTrainer(CustomSeq2SeqTrainer):
         else:
             data_collator = self._get_collator_with_removed_columns(data_collator, description="training")
         
-        self.mixer.data_collator = data_collator
+        if self.finetuning_args.static_mix == False:
+            self.mixer.data_collator = data_collator
 
         dataloader_params = {
             "batch_size": self._train_batch_size,
@@ -374,9 +378,14 @@ class MixTrainer(CustomSeq2SeqTrainer):
         total_train_batch_size = self._train_batch_size * args.gradient_accumulation_steps * args.world_size
 
         # 这里用的是初始的比例，此时train_dataset是None
-        logger.info(f"[Dataflex]Initial warmup data with initial mixture proportions.")
+        
         self.print_mixture_info()
-        self.train_dataset = self.mixture_manager.rebuild(num_samples = total_train_batch_size * self.finetuning_args.warmup_step)
+        if self.finetuning_args.static_mix:
+            logger.info(f"[Dataflex]Initial static mix data with initial mixture proportions.")
+            self.train_dataset = self.mixture_manager.rebuild(num_samples = total_train_batch_size * self.finetuning_args.train_step)
+        else:
+            logger.info(f"[Dataflex]Initial warmup data with initial mixture proportions.")
+            self.train_dataset = self.mixture_manager.rebuild(num_samples = total_train_batch_size * self.finetuning_args.warmup_step)
         train_dataloader = self.get_train_dataloader()
         
         if self.is_fsdp_xla_v2_enabled:
@@ -390,8 +399,10 @@ class MixTrainer(CustomSeq2SeqTrainer):
             len_dataloader, # 等于数据集长度/worldsize/micro_batchsize
             max_steps,
         ) = self.set_initial_training_values(args, train_dataloader, total_train_batch_size)
-
-        max_steps = (self.finetuning_args.warmup_step + self.finetuning_args.update_step * self.finetuning_args.update_times)
+        if self.finetuning_args.static_mix:
+            max_steps = self.finetuning_args.train_step
+        else:
+            max_steps = (self.finetuning_args.warmup_step + self.finetuning_args.update_step * self.finetuning_args.update_times)
         epoch_based = False
         logger.info(f"[Dataflex]Set max train steps to {max_steps}")
         logger.info(f"[Dataflex]Set epoch_based = False")
@@ -581,7 +592,7 @@ class MixTrainer(CustomSeq2SeqTrainer):
         # 放弃epoch逻辑，相当于只训练一个epoch，通过step来训练
         current_dataloader = train_dataloader
         epoch = 0
-        if self.state.global_step < self.finetuning_args.warmup_step:
+        if self.finetuning_args.static_mix == False and self.state.global_step < self.finetuning_args.warmup_step:
             logger.info("[Dataflex] Model warmup in progress...")
         # if hasattr(current_dataloader, "set_epoch"):
         #     current_dataloader.set_epoch(epoch)
@@ -761,10 +772,11 @@ class MixTrainer(CustomSeq2SeqTrainer):
 
                     # 动态训练更新
                     if (
+                        self.finetuning_args.static_mix == False and(
                         self.state.global_step < max_steps and (
                         self.state.global_step == self.finetuning_args.warmup_step or
                         (self.state.global_step > self.finetuning_args.warmup_step and
-                        (self.state.global_step - self.finetuning_args.warmup_step) % self.finetuning_args.update_step == 0))
+                        (self.state.global_step - self.finetuning_args.warmup_step) % self.finetuning_args.update_step == 0)))
                     ):
                         self.accelerator.wait_for_everyone()
                         torch.cuda.empty_cache()

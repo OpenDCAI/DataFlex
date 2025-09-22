@@ -544,9 +544,13 @@ class DynamicFinetuningArguments(
         default=1,
         metadata={"help": "Total update times during the whole dynamic training progress for dynamic select or mix training"},
     )
-    weighting_step: int = field(
+    static_mix: bool = field(
+        default=False,
+        metadata={"help": "Whether or not to fix the static mix ratio in dynamic mix training."},
+    )
+    train_step: int = field(
         default=0,
-        metadata={"help": "Only used in dynamic weight trainer. Weighting steps for dynamic weighting training"},
+        metadata={"help": "Only used in dynamic weight trainer and mix trainer (static_mix=True). Total training steps (including warmup)."},
     )
 
     def __post_init__(self):
