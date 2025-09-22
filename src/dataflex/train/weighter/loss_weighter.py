@@ -174,7 +174,7 @@ class LossWeighter:
                 if ctx.args.local_rank in [-1, 0]:
                     ps = per_sample.detach().float().cpu().view(-1)[0]
                     logger.info(f"[Datafex] Before weighting per-sample (first sample): {ps}")
-                # 分布式加权（你的 get_weighted_loss 实现）
+                # 分布式加权
                 loss = self.get_weighted_loss(per_sample, ctx=ctx, model=model, inputs=inputs)
                 if ctx.args.local_rank in [-1, 0]:
                     logger.info(f"[Datafex] After weighting (first sample): {float(loss.detach().cpu())}")
@@ -195,7 +195,6 @@ class LossWeighter:
             with amp.scale_loss(loss, ctx.optimizer) as scaled_loss:
                 scaled_loss.backward()
         else:
-            # 注意：尽量按“本次实际累积的 micro-batches 数”来除，如果你已经做了这类修正，请对应替换这里的除数
             loss = loss / ctx.args.gradient_accumulation_steps
             if ctx.accelerator.distributed_type == DistributedType.DEEPSPEED:
                 kwargs["scale_wrt_gas"] = False
