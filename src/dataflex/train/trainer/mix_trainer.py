@@ -785,7 +785,16 @@ class MixTrainer(CustomSeq2SeqTrainer):
 
                         update_times = (self.state.global_step - self.finetuning_args.warmup_step) // self.finetuning_args.update_step + 1
                         logger.info(f"[Dataflex] Model training paused, starting the {update_times}th dynamic data mixture...")
-                        probs = self.mixer.mix()
+
+                        extra_args = dict(
+                        )
+
+                        probs = self.mixer.mix(
+                            model=model,
+                            step_id=self.state.global_step,
+                            **extra_args
+                        )
+
                         self.mixture_manager.set_proportions(probs)
                         self.train_dataset = self.mixture_manager.rebuild(num_samples = total_train_batch_size * self.finetuning_args.update_step)
                         train_loader = self.get_train_dataloader()
