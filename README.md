@@ -1,5 +1,5 @@
 
-# DataFlex-Preview
+# DataFlex
 
 **DataFlex** is an advanced dynamic training framework built on top of [LlamaFactory](https://github.com/hiyouga/LLaMA-Factory).  
 It intelligently schedules data during training, supporting **dynamic sample selection**, **domain ratio adjustment**, and **dynamic weighting**, aiming to improve both training efficiency and final model performance.  
