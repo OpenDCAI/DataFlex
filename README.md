@@ -1,6 +1,19 @@
 
 # DataFlex
 
+[![Documents](https://img.shields.io/badge/Documents-Click_here-brightgreen?logo=read-the-docs)](https://OpenDCAI.github.io/DataFlex-Doc/)
+[![](https://img.shields.io/github/license/OpenDCAI/DataFlex)](https://github.com/OpenDCAI/DataFlex/blob/main/LICENSE)
+[![](https://img.shields.io/github/stars/OpenDCAI/DataFlex?style=social)](https://github.com/OpenDCAI/DataFlex)
+[![](https://img.shields.io/github/contributors/OpenDCAI/DataFlex)](https://github.com/OpenDCAI/DataFlex/graphs/contributors)
+[![](https://img.shields.io/github/repo-size/OpenDCAI/DataFlex?color=green)](https://github.com/OpenDCAI/DataFlex)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/OpenDCAI/DataFlex)
+
+<!-- [![](https://img.shields.io/github/last-commit/OpenDCAI/DataFlex)](https://github.com/OpenDCAI/DataFlex/commits/main/) -->
+<!--[![](https://img.shields.io/github/issues-raw/OpenDCAI/DataFlex)](https://github.com/OpenDCAI/DataFlex/issues) -->
+🎉 If you like our project, please give us a star ⭐ on GitHub for the latest update.
+
+[简体中文](./README-zh.md) | English
+
 **DataFlex** is an advanced dynamic training framework built on top of [LlamaFactory](https://github.com/hiyouga/LLaMA-Factory).  
 It intelligently schedules data during training, supporting **dynamic sample selection**, **domain ratio adjustment**, and **dynamic weighting**, aiming to improve both training efficiency and final model performance.  
 
@@ -76,6 +89,3 @@ update_times: 2               # number of times selection will be performed
 
 We welcome contributions of new trainers and selectors!
 Please ensure code formatting is consistent with the existing style before submitting a PR.
-
-```
-```
