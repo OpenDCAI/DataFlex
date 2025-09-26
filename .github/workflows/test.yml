@@ -1,0 +1,56 @@
+name: Python tests
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "**/*.py"
+      - "requirements.txt" 
+      - ".github/workflows/*.yml"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "**/*.py"
+      - "requirements.txt" 
+      - ".github/workflows/*.yml"
+jobs:
+  test:
+    name: Run tests on ${{ matrix.os }} with Python ${{ matrix.python }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ["ubuntu-latest", "macos-latest", "windows-latest"]
+        torch: [{base: '2.5.1', vision: '0.20.1'}]
+        python: ["3.10", "3.11", "3.12"]
+
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python ${{ matrix.python }}
+      uses: actions/setup-python@v3
+      with:
+        python-version: ${{ matrix.python }}
+    - name: Install testing dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .
+        pip install llamafactory
+
+    - name: Run tests on Windows
+      if: startsWith(matrix.os, 'windows')
+      env:
+        PYTHONDONTWRITEBYTECODE: 1
+        #         torchrun --nproc_per_node=2 -m pytest ./tests/dist
+      run: |
+        dataflex-cli version
+        llamafactory-cli version
+
+    - name: Run '${{ matrix.testmarker }}' tests on Linux / Mac
+      if: ${{ !startsWith(matrix.os, 'windows') }}
+      env:
+        # LD_PRELOAD: /usr/lib/x86_64-linux-gnu/libtcmalloc.so.4
+        PYTHONDONTWRITEBYTECODE: 1
+      run: |
+        dataflex-cli version
+        llamafactory-cli version

@@ -1,13 +1,3 @@
-'''
-DISABLE_VERSION_CHECK=1 python main_dhj.py examples/train_lora/zzytest.yaml
-
-
-FORCE_TORCHRUN=1 DISABLE_VERSION_CHECK=1 python main_dhj.py examples/train_lora/zzytest.yaml
-
-DISABLE_VERSION_CHECK=1 torchrun --nnodes 1 --node_rank 0 --nproc_per_node 1 --master_addr 127.0.0.1 --master_port 23456 main_dhj.py examples/train_lora/zzytest.yaml
-
-
-'''
 import os
 import sys
 import random
@@ -132,10 +122,29 @@ def read_args():
 
     return OmegaConf.to_container(cfg)
 
+def print_welcome():
+    try:
+        import importlib.metadata as importlib_metadata  # py3.8+
+    except ImportError:
+        import importlib_metadata
+
+    try:
+        version = importlib_metadata.version("dataflex")
+    except importlib_metadata.PackageNotFoundError:
+        version = "unknown"
+
+    print("=" * 60)
+    print(" 🎉 Welcome to DataFlex, a data-centric training system.")
+    print(f" 🚀 Installed version: {version}")
+    print("=" * 60)
 
 def main():
     command = sys.argv.pop(1)
-    if command != 'train':
+    if command == "version":
+        # 只打印版本和欢迎
+        print_welcome()
+        return
+    elif command != 'train':
         raise ValueError(f'Unknown command: {command}')
     cfg = read_args()
     patch_finetune_params()
