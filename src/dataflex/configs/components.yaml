@@ -40,3 +40,8 @@ weighters:
     params:
       strategy: linupper # choices: [linupper, uniform, quadratic, extremes]
       delta: 1.0
+  
+  custom:
+    name: custom
+    params:
+      strategy: uniform

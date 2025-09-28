@@ -9,10 +9,11 @@ if is_apex_available():
     from apex import amp
 import torch
 import torch.distributed as dist
+from .base_weighter import Weighter
 
 
 @register_weighter('loss')
-class LossWeighter:
+class LossWeighter(Weighter):
     """
     参考论文
     Dynamic Loss-Based Sample Reweighting for Improved Large Language Model Pretraining (ICLR2025)
@@ -21,7 +22,9 @@ class LossWeighter:
         self,
         strategy: str = "linupper",
         delta: float = 1.0,
+        **kwargs
     ):
+        super().__init__(**kwargs)
         self.strategy = strategy
         allowed = {"linupper", "uniform", "quadratic", "extremes"}
         if strategy not in allowed:
@@ -64,16 +67,6 @@ class LossWeighter:
                 return x.detach().float().cpu()[:5].tolist()
         return x
     
-    def _per_sample_loss_from_logits(self, logits, labels, ignore_index: int = -100):
-        shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = labels[..., 1:].contiguous()
-        num_active = (shift_labels != ignore_index).sum(dim=1)  # (B,)
-        loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
-        tok_loss = loss_fct(
-            shift_logits.view(-1, shift_logits.size(-1)),
-            shift_labels.view(-1).long()
-        )
-        return tok_loss.view(shift_logits.size(0), -1).sum(dim=1) / torch.clamp(num_active, min=1)
 
     def get_weighted_loss(
         self,
@@ -138,66 +131,3 @@ class LossWeighter:
 
         # 4) 本卡加权并 × world_size（保持与参考实现一致）
         return torch.sum(device_weights * device_losses) * world_size
-
-    def training_step(self, ctx, model, inputs, num_items_in_batch=None, use_weighter=False):
-        model.train()
-        if hasattr(ctx.optimizer, "train") and callable(ctx.optimizer.train):
-            ctx.optimizer.train()
-
-        inputs = ctx._prepare_inputs(inputs)
-
-        # 预先保存一份 labels（防止某些实现里被 pop 掉）
-        labels_for_weighter = inputs.get("labels", None)
-
-        with ctx.compute_loss_context_manager():
-            # 关键：拿到 outputs
-            loss, outputs = ctx.compute_loss(
-                model, inputs, num_items_in_batch=num_items_in_batch, return_outputs=True
-            )
-
-        if use_weighter:
-            # 1) 如果 compute_loss 已经返回的是 (B,) 向量，直接用
-            if torch.is_tensor(loss) and loss.dim() == 1:
-                per_sample = loss
-            else:
-                # 2) 否则用 logits+labels 现场算每样本 loss（不需要二次前向）
-                logits = getattr(outputs, "logits", None) if outputs is not None else None
-                labels = inputs.get("labels", None)
-                if labels is None:
-                    labels = labels_for_weighter
-                per_sample = None
-                if logits is not None and labels is not None:
-                    per_sample = self._per_sample_loss_from_logits(logits, labels)
-
-            if per_sample is not None:
-                # 日志仅主进程打
-                if ctx.args.local_rank in [-1, 0]:
-                    ps = per_sample.detach().float().cpu().view(-1)[0]
-                    logger.info(f"[Datafex] Before weighting per-sample (first sample): {ps}")
-                # 分布式加权
-                loss = self.get_weighted_loss(per_sample, ctx=ctx, model=model, inputs=inputs)
-                if ctx.args.local_rank in [-1, 0]:
-                    logger.info(f"[Datafex] After weighting (first sample): {float(loss.detach().cpu())}")
-            else:
-                if ctx.args.local_rank in [-1, 0]:
-                    logger.info("[Datafex] Could not form per-sample losses; fallback to scalar loss (no reweight).")
-
-        del inputs
-
-        if ctx.args.torch_empty_cache_steps is not None and ctx.state.global_step % ctx.args.torch_empty_cache_steps == 0:
-            ctx._empty_cache()
-
-        kwargs = {}
-        if ctx.args.n_gpu > 1:
-            loss = loss.mean()
-
-        if getattr(ctx, "use_apex", False):
-            with amp.scale_loss(loss, ctx.optimizer) as scaled_loss:
-                scaled_loss.backward()
-        else:
-            loss = loss / ctx.args.gradient_accumulation_steps
-            if ctx.accelerator.distributed_type == DistributedType.DEEPSPEED:
-                kwargs["scale_wrt_gas"] = False
-            ctx.accelerator.backward(loss, **kwargs)
-
-        return loss.detach()
