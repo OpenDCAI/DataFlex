@@ -1,5 +1,5 @@
 ### model
-model_name_or_path: /mnt/public/model/huggingface/Qwen2.5-3B-Instruct
+model_name_or_path: meta-llama/Llama-3.1-8B
 trust_remote_code: true
 
 ### method
@@ -13,7 +13,7 @@ lora_alpha: 8
 
 ### dataset
 dataset: alpaca_en_demo
-template: qwen
+template: llama3
 cutoff_len: 4096
 # max_samples: 100000000
 overwrite_cache: true
@@ -23,7 +23,7 @@ dataloader_num_workers: 0
 seed: 42
 
 ### output
-output_dir: /mnt/public2/code/zzy/LLaMA-Flex/saves/test
+output_dir: ../dataflex_saves/Llama-3.1-8B/test
 logging_steps: 10
 save_steps: 100
 plot_loss: true
@@ -51,12 +51,13 @@ bf16: true
 ddp_timeout: 180000000
 
 ### Dataflex args
-train_type: dynamic_weight   # 选择训练器类型。可选值包括：
+train_type: dynamic_select   # 选择训练器类型。可选值包括：
                           # "dynamic_select" - 动态选择训练器
                           # "dynamic_mix" - 动态混合训练器
                           # "dynamic_weight" - 动态加权训练器
                           # "static" - 默认静态训练器
 components_cfg_file: src/dataflex/configs/components.yaml
-component_name: custom  # 选择组件名称，对应 components_cfg_file 中定义的组件
-warmup_step: 1
-train_step: 3 # 总训练步数（包括warm_up） 
+component_name: delta_loss  # 选择组件名称，对应 components_cfg_file 中定义的组件
+warmup_step: 4
+update_step: 3
+update_times: 4
