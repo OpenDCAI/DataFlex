@@ -3,3 +3,4 @@ __pycache__/
 output.txt
 **/.ipynb_checkpoints/
 /examples/train_lora/develop/
+/examples/zzytest/

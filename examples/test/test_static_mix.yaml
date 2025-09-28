@@ -1,5 +1,5 @@
 ### model
-model_name_or_path: /mnt/public/model/huggingface/Qwen2.5-3B-Instruct
+model_name_or_path: meta-llama/Llama-3.1-8B
 trust_remote_code: true
 
 ### method
@@ -13,7 +13,7 @@ lora_alpha: 8
 
 ### dataset
 dataset: alpaca_en_demo,alpaca_zh_demo   # 多数据集逗号分隔
-template: qwen
+template: llama3
 cutoff_len: 4096
 overwrite_cache: true
 preprocessing_num_workers: 16
@@ -21,7 +21,7 @@ dataloader_num_workers: 0
 seed: 42
 
 ### output
-output_dir: /mnt/public2/code/zzy/LLaMA-Flex/saves/test_mixture
+output_dir: ../dataflex_saves/Llama-3.1-8B/test_mixture
 logging_steps: 10
 save_steps: 100
 plot_loss: true
@@ -45,12 +45,9 @@ ddp_timeout: 180000000
 train_type: dynamic_mix   # 选择训练器类型。可选值包括：
                           # "dynamic_select" - 动态选择训练器
                           # "dynamic_mix" - 动态混合训练器
-                          # "dynamic_weight" - 动态加权训练器（尚未完成）
+                          # "dynamic_weight" - 动态加权训练器
                           # "static" - 默认静态训练器
-components_cfg_file: src/dataflex/configs/components.yaml
-component_name: random
+static_mix: true                # 是否固定初始静态混合比例（仅在dynamic_mix训练器中生效）
 mixture_sample_rule: mixture     # 初始采样规则，mixture为根据init_mixture_proportions比例混合（可动态调整），stratified为固定按源数据集大小比例分层，uniform为固定均匀分布
-init_mixture_proportions: [0.7, 0.3]         # 对应初始的比例
-warmup_step: 4
-update_step: 3
-update_times: 2
+init_mixture_proportions: [0.7, 0.3]         # 对应初始的比例，可通过额外算法自行调整
+train_step: 3                # 总训练步数（仅在dynamic_mix训练器中生效），不考虑warmup和update steps
