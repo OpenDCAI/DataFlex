@@ -7,13 +7,13 @@ stage: sft
 do_train: true
 finetuning_type: lora
 lora_target: all
-lora_rank: 32
-lora_alpha: 16
-#deepspeed: examples/deepspeed/ds_z3_config.json  # choices: [ds_z0_config.json, ds_z2_config.json, ds_z3_config.json]
+lora_rank: 16
+lora_alpha: 8
+# deepspeed: examples/deepspeed/ds_z3_config.json  # choices: [ds_z0_config.json, ds_z2_config.json, ds_z3_config.json]
 
 ### dataset
 dataset: alpaca_en_demo
-template: qwen
+template: llama3
 cutoff_len: 4096
 # max_samples: 100000000
 overwrite_cache: true
@@ -23,7 +23,7 @@ dataloader_num_workers: 0
 seed: 42
 
 ### output
-output_dir: ../dataflex_saves/Llama-3.1-8B/custom_weighter_result
+output_dir: ../dataflex_saves/Llama-3.1-8B/custom
 logging_steps: 10
 save_steps: 100
 plot_loss: true
@@ -50,18 +50,13 @@ warmup_ratio: 0.1
 bf16: true
 ddp_timeout: 180000000
 
-### dynamic_train
-train_type: dynamic_weight
+### Dataflex args
+train_type: dynamic_weight   # 选择训练器类型。可选值包括：
+                          # "dynamic_select" - 动态选择训练器
+                          # "dynamic_mix" - 动态混合训练器
+                          # "dynamic_weight" - 动态加权训练器
+                          # "static" - 默认静态训练器
 components_cfg_file: src/dataflex/configs/components.yaml
-component_name: custom
-warmup_step: 50
-update_step: 100
-update_times: 3
-
-eval_dataset: alpaca_zh_demo
-
-## eval
-# val_size: 0.001
-# per_device_eval_batch_size: 1
-# eval_strategy: steps
-# eval_steps: 1000
+component_name: custom  # 选择组件名称，对应 components_cfg_file 中定义的组件
+warmup_step: 100
+train_step: 500 # 总训练步数（包括warm_up） 
