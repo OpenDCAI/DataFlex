@@ -7,14 +7,12 @@ stage: sft
 do_train: true
 finetuning_type: lora
 lora_target: all
-lora_rank: 128
-lora_alpha: 512
+lora_rank: 16
+lora_alpha: 8
 # deepspeed: examples/deepspeed/ds_z3_config.json  # choices: [ds_z0_config.json, ds_z2_config.json, ds_z3_config.json]
 
-
 ### dataset
-dataset: flan_v2,cot_data,dolly_data,oasst1_data
-eval_dataset: mmlu_eval
+dataset: alpaca_en_demo
 template: llama3
 cutoff_len: 4096
 # max_samples: 100000000
@@ -25,11 +23,11 @@ dataloader_num_workers: 0
 seed: 42
 
 ### output
-output_dir: ../dataflex_saves/Llama-3.1-8B/loss_result
+output_dir: ../dataflex_saves/Llama-3.1-8B/loss
 logging_steps: 10
 save_steps: 100
 plot_loss: true
-save_only_model: true
+save_only_model: false
 overwrite_output_dir: true
 
 ### swanlab
@@ -44,23 +42,22 @@ report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
 
 ### train
 per_device_train_batch_size: 2
-gradient_accumulation_steps: 8
-learning_rate: 2.0e-5
+gradient_accumulation_steps: 16
+learning_rate: 1.0e-4
 num_train_epochs: 1.0
-lr_scheduler_type: constant
-warmup_ratio: 0.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
 bf16: true
 ddp_timeout: 180000000
 
-### dynamic_train
-train_type: dynamic_select
+### Dataflex args
+train_type: dynamic_select   # 选择训练器类型。可选值包括：
+                          # "dynamic_select" - 动态选择训练器
+                          # "dynamic_mix" - 动态混合训练器
+                          # "dynamic_weight" - 动态加权训练器
+                          # "static" - 默认静态训练器
 components_cfg_file: src/dataflex/configs/components.yaml
-component_name: loss
-warmup_step: 200
-update_step: 500
-update_times: 4
-## eval
-# val_size: 0.001
-# per_device_eval_batch_size: 1
-# eval_strategy: steps
-# eval_steps: 1000
+component_name: loss  # 选择组件名称，对应 components_cfg_file 中定义的组件
+warmup_step: 300
+update_step: 3
+update_times: 400
