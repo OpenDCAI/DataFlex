@@ -33,7 +33,7 @@ DataFlex integrates seamlessly with LlamaFactory, offering researchers and devel
 ## 🚀 Installation
 
 ```bash
-git clone https://github.com/OpenDCAI/DataFlex-Preview.git
+git clone https://github.com/OpenDCAI/DataFlex.git
 cd DataFlex-Preview
 pip install -e .
 pip install llamafactory
