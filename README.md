@@ -34,7 +34,7 @@ DataFlex integrates seamlessly with LlamaFactory, offering researchers and devel
 
 ```bash
 git clone https://github.com/OpenDCAI/DataFlex.git
-cd DataFlex-Preview
+cd DataFlex
 pip install -e .
 pip install llamafactory
 ```
@@ -47,7 +47,7 @@ The launch command is similar to [LlamaFactory](https://github.com/hiyouga/LLaMA
 Below is an example using [LESS](https://arxiv.org/abs/2402.04333) :
 
 ```bash
-FORCE_TORCHRUN=1 DISABLE_VERSION_CHECK=1 dataflex-cli train examples/train_lora/less.yaml
+FORCE_TORCHRUN=1 DISABLE_VERSION_CHECK=1 dataflex-cli train examples/train_lora/selectors/less.yaml
 ```
 
 Unlike vanilla LlamaFactory, your `.yaml` config file must also include **DataFlex-specific parameters**.
