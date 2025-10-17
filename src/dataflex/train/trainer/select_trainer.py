@@ -358,8 +358,15 @@ class SelectTrainer(CustomSeq2SeqTrainer):
         # 这个是global batch size
         total_train_batch_size = self._train_batch_size * args.gradient_accumulation_steps * args.world_size
 
+        if total_train_batch_size * self.finetuning_args.update_step > len(self.train_dataset):
+            assert False, f"Total updated samples {total_train_batch_size * self.finetuning_args.update_step} is larger than dataset size {len(self.train_dataset)}"
+
         logger.info(f"[Dataflex] Dynamic training mode")
         total_warmup_samples = total_train_batch_size * self.finetuning_args.warmup_step
+
+        if total_warmup_samples > len(self.train_dataset):
+            assert False, f"Total warmup samples {total_warmup_samples} is larger than dataset size {len(self.train_dataset)}"
+
         logger.info(f"[Dataflex] Warmup step {self.finetuning_args.warmup_step}, warmup samples: {total_warmup_samples} in total")
         warmup_indices = self.selector.warmup(total_warmup_samples, replacement=True)
         train_dataloader = self.get_train_dataloader(warmup_indices)
