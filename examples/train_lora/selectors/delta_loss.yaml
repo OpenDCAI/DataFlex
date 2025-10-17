@@ -41,8 +41,8 @@ report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
 # swanlab_lark_secret: cySzwTbCJh08349FGAhBSf
 
 ### train
-per_device_train_batch_size: 2
-gradient_accumulation_steps: 16
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 1
 learning_rate: 1.0e-4
 num_train_epochs: 1.0
 lr_scheduler_type: cosine
@@ -58,6 +58,6 @@ train_type: dynamic_select   # 选择训练器类型。可选值包括：
                           # "static" - 默认静态训练器
 components_cfg_file: src/dataflex/configs/components.yaml
 component_name: delta_loss  # 选择组件名称，对应 components_cfg_file 中定义的组件
-warmup_step: 300
-update_step: 3
-update_times: 400
+warmup_step: 10
+update_step: 10
+update_times: 2

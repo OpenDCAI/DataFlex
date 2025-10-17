@@ -34,6 +34,7 @@ class LessSelector(Selector):
                  cache_dir,
                  gradient_type: str = "adam",
                  proj_dim: int = 8192,
+                 save_interval: int = 16,
                  seed: int = 42):
         """
         初始化 LessSelector.
@@ -43,6 +44,7 @@ class LessSelector(Selector):
         self.eval_dataset = eval_dataset
         self.gradient_type = gradient_type
         self.proj_dim = proj_dim
+        self.save_interval = save_interval
         self.seed = seed
         
         self.device = self.accelerator.device
@@ -70,7 +72,7 @@ class LessSelector(Selector):
         avg_sq = torch.cat(avg_sq_list).to(self.device)
         return avg, avg_sq
 
-    def _obtain_gradients(self, model, batch, m: Optional[torch.Tensor] = None, v: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def _obtain_gradients(self, model, batch, gradient_type, m: Optional[torch.Tensor] = None, v: Optional[torch.Tensor] = None) -> torch.Tensor:
         """根据指定的类型计算单个样本的梯度向量。"""
         with self.accelerator.no_sync(model):
             loss = model(**batch).loss
@@ -80,17 +82,17 @@ class LessSelector(Selector):
             [p.grad.view(-1) for p in model.parameters() if p.grad is not None]
         )
 
-        if self.gradient_type == "adam":
+        if gradient_type == "adam":
             if m is None or v is None:
                 raise ValueError("Adam optimizer states (m, v) must be provided for 'adam' gradient type.")
             beta1, beta2, eps = 0.9, 0.999, 1e-08
             updated_avg = beta1 * m + (1 - beta1) * vectorized_grads
             updated_avg_sq = beta2 * v + (1 - beta2) * vectorized_grads ** 2
             final_grads = updated_avg / torch.sqrt(updated_avg_sq + eps)
-        elif self.gradient_type == "sign":
-            final_grads = torch.sign(vectorized_grads)
-        else: # "sgd"
+        elif gradient_type == "sgd":
             final_grads = vectorized_grads
+        else:
+            assert False, f"Unknown gradient type: {gradient_type}"
         
         model.zero_grad()
         return final_grads
@@ -131,7 +133,7 @@ class LessSelector(Selector):
         return max(indices) if indices else -1
 
     # MODIFIED: 重写核心逻辑
-    def _collect_and_save_projected_gradients(self, model, save_dir, dataset_to_use, optimizer_state: Optional[Dict] = None):
+    def _collect_and_save_projected_gradients(self, model, save_dir, dataset_to_use, gradient_type, optimizer_state: Optional[Dict] = None):
         """
         核心函数：每个进程独立计算梯度、投影，并保存带有索引的分块文件。
         """
@@ -178,7 +180,7 @@ class LessSelector(Selector):
 
         # 4) 设置保存间隔
         # MODIFIED: 这是每个进程的本地保存间隔
-        save_interval = 64 # 每个进程每处理save_interval个样本就映射并保存一次
+        save_interval = self.save_interval # 每个进程每处理save_interval个样本就映射并保存一次
 
         # 5) 断点续传
         max_index = self._get_max_saved_index(save_dir=save_dir)
@@ -212,7 +214,7 @@ class LessSelector(Selector):
             indices = data['indices']
             batch = data['batch']
 
-            vectorized_grads = self._obtain_gradients(model, batch, m, v)
+            vectorized_grads = self._obtain_gradients(model, batch, gradient_type, m, v)
             local_grads_to_project.append(vectorized_grads)
             local_indices_to_project.append(indices)
 
@@ -309,7 +311,7 @@ class LessSelector(Selector):
         if not os.path.exists(train_final_grads_path):
             os.makedirs(now_train_save_dir, exist_ok=True)
             optimizer_state = kwargs.get('optimizer_state', None) 
-            self._collect_and_save_projected_gradients(model, now_train_save_dir, self.dataset, optimizer_state)
+            self._collect_and_save_projected_gradients(model, now_train_save_dir, self.dataset, self.gradient_type, optimizer_state)
             self._merge_and_normalize_info(now_train_save_dir, len(self.dataset))
         
         self.accelerator.wait_for_everyone()
@@ -318,7 +320,7 @@ class LessSelector(Selector):
         if not os.path.exists(eval_final_grads_path):
             os.makedirs(now_eval_save_dir, exist_ok=True)
             # MODIFIED: 传入 eval_dataset
-            self._collect_and_save_projected_gradients(model, now_eval_save_dir, self.eval_dataset, optimizer_state)
+            self._collect_and_save_projected_gradients(model, now_eval_save_dir, self.eval_dataset, "sgd", None)
             self._merge_and_normalize_info(now_eval_save_dir, len(self.eval_dataset))
         
         self.accelerator.wait_for_everyone()

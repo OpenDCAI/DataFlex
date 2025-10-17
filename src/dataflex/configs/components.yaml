@@ -5,7 +5,7 @@ selectors:
     name: less
     params:
       cache_dir: ../dataflex_saves/less_output
-      gradient_type: adamw
+      gradient_type: adam
       proj_dim: 4096
       seed: 123
 
