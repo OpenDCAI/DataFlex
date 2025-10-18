@@ -1,6 +1,22 @@
 # configs/components.yaml
 selectors:
   # 动态数据选择器
+  nice_judge:
+    name: nice_judge
+    params:
+      cache_dir: ../dataflex_saves/nice_judge_output
+      gradient_type: adam
+      proj_dim: 4096
+      seed: 123
+
+  nice_rm:
+    name: nice_rm
+    params:
+      cache_dir: ../dataflex_saves/nice_rm_output
+      gradient_type: adam
+      proj_dim: 4096
+      seed: 123
+
   less:
     name: less
     params:
