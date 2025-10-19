@@ -153,7 +153,7 @@ class LessSelector(Selector):
 
         # 2) 准备 Adam 状态 (如果需要)
         m, v = None, None
-        if self.gradient_type == "adam":
+        if gradient_type == "adam":
             if optimizer_state is None:
                 raise ValueError("optimizer_state must be provided for 'adam' gradient type.")
             m, v = self._prepare_optimizer_state(model, optimizer_state)
