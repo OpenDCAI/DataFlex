@@ -1,0 +1,80 @@
+### model
+model_name_or_path: /mnt/DataFlow/qmy/models/Qwen2.5-1.5B
+# model_name_or_path: meta-llama/Llama-3.1-8B
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_target: all
+lora_rank: 16
+lora_alpha: 8
+#deepspeed: examples/deepspeed/ds_z3_config.json  # choices: [ds_z0_config.json, ds_z2_config.json, ds_z3_config.json]
+
+### dataset
+dataset: alpaca_en_demo
+# template: llama3      # choices: [qwen,llama3,...]
+template: qwen
+cutoff_len: 4096
+# max_samples: 100000000
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 0
+# disable_shuffling: true
+seed: 42
+
+### output
+output_dir: ../dataflex_saves/nice_output
+logging_steps: 10
+save_steps: 100
+plot_loss: true
+save_only_model: false
+overwrite_output_dir: true
+
+### swanlab
+report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
+# use_swanlab: true
+# swanlab_project: medical_dynamic_sft
+# swanlab_run_name: qwen2_5_3b_lora_medical_50k_baseline
+# swanlab_workspace: word2li
+# swanlab_api_key: AnLWTMijcbd4cyEfundi3
+# swanlab_lark_webhook_url: https://open.feishu.cn/open-apis/bot/v2/hook/ff10a391-4e51-4481-97ff-965760cae2a1
+# swanlab_lark_secret: cySzwTbCJh08349FGAhBSf
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 1
+learning_rate: 1.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+
+### dynamic_train
+train_type: dynamic_select
+components_cfg_file: src/dataflex/configs/components.yaml
+component_name: nice
+warmup_step: 10
+update_step: 10
+update_times: 2
+component_overrides:
+  # Policy model and trained model set to the same model is the NICE algorithm in paper, different is the NICEAMC algorithm in paper.
+  # policy_model_path: /path/to/your/policy_model        
+  # Use a strong model, preferably different from policy series.
+  # reward_model_path: /path/to/your/judge_model    
+  policy_model_path: /mnt/DataFlow/qmy/models/Qwen2-1.5B
+  reward_model_path: /mnt/DataFlow/qmy/models/Qwen2.5-1.5B
+  mc_samples: 4
+  max_new_tokens: 512
+  generation_temperature: 0.7
+  max_prompt_length: 4096
+
+eval_dataset: alpaca_zh_demo
+
+## eval
+# val_size: 0.001
+# per_device_eval_batch_size: 1
+# eval_strategy: steps
+# eval_steps: 1000

@@ -1,6 +1,14 @@
 # configs/components.yaml
 selectors:
   # 动态数据选择器
+  nice:
+    name: nice
+    params:
+      cache_dir: ../dataflex_saves/nice_output
+      gradient_type: adam
+      proj_dim: 4096
+      seed: 123
+
   less:
     name: less
     params:
