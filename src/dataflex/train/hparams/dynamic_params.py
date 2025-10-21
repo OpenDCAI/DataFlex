@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Literal, Optional
 
 
 @dataclass
@@ -531,11 +531,7 @@ class DynamicFinetuningArguments(
     component_name: str = field(
         default="Loss",
         metadata={"help": "The component name defined in the components configuration file."},
-    )
-    component_overrides: Dict[str, Any] = field(
-        default_factory=dict,
-        metadata={"help": "Custom parameters used to override the params field in the component configuration file."},
-    )   
+    ) 
     warmup_step: int = field(
         default=0,
         metadata={"help": "Warm up steps for dynamic training"},
