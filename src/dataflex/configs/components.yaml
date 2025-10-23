@@ -20,7 +20,17 @@ selectors:
     params:
       cache_dir: ../dataflex_saves/delta_loss_output
       window_size: 0.2
-
+  tsds:
+    name: tsds
+    params:
+      max_K: 128
+      kde_K: 64
+      sigma: 0.8
+      alpha: 0.5
+      C: 10.0
+      model_name: "/home/lianghao/yry/TSDS/bert_chinese"
+      cache_dir: ../dataflex_saves/tsds_output
+      
   custom:
     name: custom
     params:
