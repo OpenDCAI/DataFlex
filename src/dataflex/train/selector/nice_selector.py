@@ -9,12 +9,14 @@ import torch.distributed as dist
 from tqdm import tqdm
 from torch.utils.data import DataLoader, Dataset
 from trak.projectors import BasicProjector, CudaProjector, ProjectionType
-import json
 import os
-import glob # 用于文件查找
+import glob 
 
-# NEW: IndexedDataset Wrapper
+from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModelForSequenceClassification
+import torch.nn.functional as F
+
 class IndexedDataset(Dataset):
+    """索引包装，确保样本索引在缓存时保持一致。"""
     def __init__(self, original_dataset):
         self.original_dataset = original_dataset
 
@@ -24,34 +26,108 @@ class IndexedDataset(Dataset):
     def __getitem__(self, index):
         return index, self.original_dataset[index]
 
-@register_selector('less')
-class LessSelector(Selector):
-    def __init__(self, 
-                 dataset, 
+DEFAULT_POLICY_PROMPT = (
+    "Below is an instruction that describes a task, paired with an optional input that provides further context. "
+    "Write a response that appropriately completes the request.\n"
+    "### Instruction:\n{instruction}\n"
+    "### Input:\n{input}\n"
+    "### Response:"
+)
+
+DEFAULT_REWARD_PROMPT_WITH_REF = (
+    "You are a reward model. Your task is to evaluate an AI's response based on a given instruction, input, and a reference answer. "
+    "Provide a single score between 0.0 (worst) and 1.0 (best).\n\n"
+    "A score of 1.0 means the **Candidate** response is correct, helpful, and perfectly aligned with the **Reference** answer.\n"
+    "A score of 0.0 means the response is incorrect, unhelpful, or completely misaligned.\n\n"
+    "### Instruction:\n{instruction}\n"
+    "### Input:\n{input}\n"
+    "### Reference:\n{reference}\n"
+    "### Candidate:\n{prediction}\n"
+    "Score:"
+)
+
+DEFAULT_REWARD_PROMPT_NO_REF = (
+    "You are a reward model. Your task is to evaluate an AI's response based on a given instruction and input. "
+    "Provide a single score between 0.0 (worst) and 1.0 (best).\n\n"
+    "A score of 1.0 means the **Candidate** response is correct, helpful, and completely safe.\n"
+    "A score of 0.0 means the response is incorrect, unhelpful, or unsafe.\n\n"
+    "### Instruction:\n{instruction}\n"
+    "### Input:\n{input}\n"
+    "### Candidate:\n{prediction}\n"
+    "Score:"
+)
+
+@register_selector('nice')
+class NICESelector(Selector):
+    def __init__(self,
+                 dataset,
                  eval_dataset,
-                 accelerator, 
+                 accelerator,
                  data_collator,
                  cache_dir,
+                 policy_model_path: str,
+                 reward_model_path: str,
                  gradient_type: str = "adam",
                  proj_dim: int = 8192,
-                 save_interval: int = 16,
-                 seed: int = 42):
-        """
-        初始化 LessSelector.
-        """
+                 seed: int = 42,
+                 mc_samples: int = 4,
+                 max_new_tokens: int = 512,
+                 generation_temperature: float = 0.7,
+                 prompt_template: Optional[str] = None,
+                 reward_prompt_with_ref: Optional[str] = None,
+                 reward_prompt_without_ref: Optional[str] = None,
+                 max_prompt_length: int = 4096):
+        """初始化 NICE 选择器，加载策略与奖励模型。"""
         super().__init__(dataset, accelerator, data_collator, cache_dir)
 
         self.eval_dataset = eval_dataset
         self.gradient_type = gradient_type
         self.proj_dim = proj_dim
-        self.save_interval = save_interval
         self.seed = seed
-        
+        self.mc_samples = mc_samples
+        self.max_new_tokens = max_new_tokens
+        self.generation_temperature = generation_temperature
+        self.prompt_template = prompt_template or DEFAULT_POLICY_PROMPT
+        self.reward_prompt_with_ref = reward_prompt_with_ref or DEFAULT_REWARD_PROMPT_WITH_REF
+        self.reward_prompt_without_ref = reward_prompt_without_ref or DEFAULT_REWARD_PROMPT_NO_REF
+        self.max_prompt_length = max_prompt_length
+
         self.device = self.accelerator.device
         self.dtype = torch.float16
 
+        self.policy_model_path = policy_model_path
+        self.reward_model_path = reward_model_path
+
         os.makedirs(self.cache_dir, exist_ok=True)
-        logger.info(f"LessSelector initialized. Projected gradients will be saved in {self.cache_dir}")
+        logger.info("NICESelector initialized, loading local models...")
+
+        self._load_local_models()
+        logger.info(f"Loaded policy model from {policy_model_path}")
+        logger.info(f"Loaded reward model from {reward_model_path}")
+
+    def _load_local_models(self):
+        """从本地路径加载策略模型与奖励模型。"""
+        self.policy_tokenizer = AutoTokenizer.from_pretrained(self.policy_model_path, trust_remote_code=True)
+        if self.policy_tokenizer.pad_token_id is None:
+            self.policy_tokenizer.pad_token_id = self.policy_tokenizer.eos_token_id
+        self.policy_model = AutoModelForCausalLM.from_pretrained(
+            self.policy_model_path,
+            trust_remote_code=True,
+            torch_dtype=self.dtype,
+        ).to(self.device)
+        self.policy_model.eval()
+        self.policy_model.requires_grad_(False)
+
+        self.reward_tokenizer = AutoTokenizer.from_pretrained(self.reward_model_path, trust_remote_code=True)
+        if self.reward_tokenizer.pad_token_id is None:
+            self.reward_tokenizer.pad_token_id = self.reward_tokenizer.eos_token_id
+        self.reward_model = AutoModelForSequenceClassification.from_pretrained(
+            self.reward_model_path,
+            trust_remote_code=True,
+            torch_dtype=self.dtype,
+        ).to(self.device)
+        self.reward_model.eval()
+        self.reward_model.requires_grad_(False)
 
     def _get_number_of_params(self, model) -> int:
         """计算模型中需要梯度的参数数量。"""
@@ -72,7 +148,7 @@ class LessSelector(Selector):
         avg_sq = torch.cat(avg_sq_list).to(self.device)
         return avg, avg_sq
 
-    def _obtain_gradients(self, model, batch, gradient_type, m: Optional[torch.Tensor] = None, v: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def _obtain_gradients(self, model, batch, gradient_type: str, *, m: Optional[torch.Tensor] = None, v: Optional[torch.Tensor] = None) -> torch.Tensor:
         """根据指定的类型计算单个样本的梯度向量。"""
         with self.accelerator.no_sync(model):
             loss = model(**batch).loss
@@ -114,8 +190,7 @@ class LessSelector(Selector):
 
     def _get_max_saved_index(self, save_dir) -> int:
         """
-        MODIFIED: 获取已保存的最大样本数（而不是 chunk 索引），用于断点续传。
-        我们通过查看最后一个文件的文件名来推断。
+        获取已保存的最大样本索引，方便断点续传。
         """
         prefix = "grads"
         if not os.path.exists(save_dir):
@@ -132,11 +207,155 @@ class LessSelector(Selector):
         indices = [int(f.split('.')[0].split('-')[1]) for f in files]
         return max(indices) if indices else -1
 
-    # MODIFIED: 重写核心逻辑
-    def _collect_and_save_projected_gradients(self, model, save_dir, dataset_to_use, gradient_type, optimizer_state: Optional[Dict] = None):
-        """
-        核心函数：每个进程独立计算梯度、投影，并保存带有索引的分块文件。
-        """
+    def _format_generation_prompt(self, example: Dict) -> str:
+        """构造策略模型提示词"""
+        instruction = example.get("instruction", "").strip()
+        input_text = example.get("input", "").strip() or "No additional input."
+        prompt = self.prompt_template.format(
+            instruction=instruction,
+            input=input_text,
+        )
+        return prompt
+
+    def _format_reward_prompt(self, example: Dict, prediction: str) -> str:
+        """根据是否存在参考答案动态生成奖励模型提示词。"""
+        instruction = example.get("instruction", "").strip()
+        input_text = example.get("input", "").strip() or "No additional input."
+        reference = example.get("output", "").strip()
+        if reference:
+            prompt = self.reward_prompt_with_ref.format(
+                instruction=instruction,
+                input=input_text,
+                reference=reference,
+                prediction=prediction.strip() or "No response.",
+            )
+        else:
+            prompt = self.reward_prompt_without_ref.format(
+                instruction=instruction,
+                input=input_text,
+                prediction=prediction.strip() or "No response.",
+            )
+        return prompt
+
+    def _generate_response(self, example: Dict, sample_seed: Optional[int] = None) -> Dict:
+        """调用策略模型生成回答并保留生成细节，支持蒙特卡洛采样。"""
+        prompt = self._format_generation_prompt(example)
+        inputs = self.policy_tokenizer(
+            prompt,
+            return_tensors="pt",
+            truncation=True,
+            max_length=self.max_prompt_length,
+        )
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+        cpu_state = None
+        cuda_state = None
+        if sample_seed is not None:
+            cpu_state = torch.random.get_rng_state()
+            if torch.cuda.is_available():
+                cuda_state = torch.cuda.get_rng_state_all()
+            torch.manual_seed(sample_seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(sample_seed)
+
+        with torch.no_grad():
+            generated_ids = self.policy_model.generate(
+                **inputs,
+                max_new_tokens=self.max_new_tokens,
+                temperature=self.generation_temperature,
+                do_sample=True,
+                pad_token_id=self.policy_tokenizer.pad_token_id,
+                eos_token_id=self.policy_tokenizer.eos_token_id,
+            )
+
+        if sample_seed is not None:
+            torch.random.set_rng_state(cpu_state)
+            if torch.cuda.is_available() and cuda_state is not None:
+                torch.cuda.set_rng_state_all(cuda_state)
+
+        prompt_length = inputs["input_ids"].shape[1]
+        new_tokens = generated_ids[:, prompt_length:]
+        generated_text = self.policy_tokenizer.batch_decode(new_tokens, skip_special_tokens=True)[0].strip()
+
+        attention_mask = generated_ids.ne(self.policy_tokenizer.pad_token_id).long()
+
+        return {
+            "prompt": prompt,
+            "input_ids": generated_ids,
+            "attention_mask": attention_mask,
+            "prompt_length": prompt_length,
+            "prediction": generated_text,
+        }
+
+    def _score_with_classifier(self, model, tokenizer, prompt: str) -> float:
+        """将奖励模型输出映射到 [0, 1]，兼容不同 logits 形状。"""
+        if model is None or tokenizer is None:
+            return 0.0
+        inputs = tokenizer(
+            prompt,
+            return_tensors="pt",
+            truncation=True,
+            max_length=self.max_prompt_length,
+        )
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        with torch.no_grad():
+            logits = model(**inputs).logits
+        if logits.ndim == 1:
+            score = torch.sigmoid(logits).mean().item()
+        elif logits.shape[-1] == 1:
+            score = torch.sigmoid(logits.squeeze(-1)).mean().item()
+        else:
+            probs = F.softmax(logits, dim=-1)
+            score = probs[..., -1].mean().item()
+        return float(score)
+
+    def _compute_reward(self, example: Dict, prediction: str) -> float:
+        """奖励模型既支持带参考答案也支持无参考答案的打分。"""
+        reward_prompt = self._format_reward_prompt(example, prediction)
+        reward = self._score_with_classifier(self.reward_model, self.reward_tokenizer, reward_prompt)
+        return reward
+
+    def _compute_rl_gradient(self,
+                             model,
+                             sample_info: Dict,
+                             reward: float,
+                             grad_dim: int) -> torch.Tensor:
+        """根据策略梯度公式计算验证集梯度，直接回传序列对数似然。"""
+        model_device = next(model.parameters()).device
+        if reward == 0.0:
+            return torch.zeros(grad_dim, device=model_device)
+
+        input_ids = sample_info["input_ids"].to(model_device)
+        attention_mask = sample_info["attention_mask"].to(model_device)
+        labels = input_ids.clone()
+        labels[:, :sample_info["prompt_length"]] = -100
+        token_count = (labels != -100).sum()
+        if token_count.item() == 0:
+            return torch.zeros(grad_dim, device=model_device)
+
+        reward_tensor = torch.tensor(reward, dtype=torch.float32, device=model_device)
+
+        with self.accelerator.no_sync(model):
+            outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+            nll_loss = outputs.loss * token_count
+            loss = nll_loss * reward_tensor
+            self.accelerator.backward(loss)
+
+        vectorized_grads = torch.cat(
+            [p.grad.view(-1) for p in model.parameters() if p.grad is not None]
+        ).to(model_device)
+
+        model.zero_grad()
+        return vectorized_grads
+
+    # 核心逻辑
+    def _collect_and_save_projected_gradients(self,
+                                              model,
+                                              save_dir,
+                                              dataset_to_use,
+                                              optimizer_state: Optional[Dict] = None,
+                                              rl_mode: bool = False):
+        """统一采集梯度、执行投影并保存，rl_mode 控制是否启用蒙特卡洛采样。"""
         # 1) 初始化 Projector (每个进程都需要一个)
         num_params = self._get_number_of_params(model)
         projector_class = self._get_trak_projector()
@@ -153,21 +372,26 @@ class LessSelector(Selector):
 
         # 2) 准备 Adam 状态 (如果需要)
         m, v = None, None
-        if gradient_type == "adam":
+        if self.gradient_type == "adam":
             if optimizer_state is None:
                 raise ValueError("optimizer_state must be provided for 'adam' gradient type.")
             m, v = self._prepare_optimizer_state(model, optimizer_state)
         
-        # 3) 构造 DataLoader
-        # NEW: 使用 IndexedDataset 来追踪样本的原始索引
+        # 3) 构造 DataLoader，使用 IndexedDataset 来追踪样本的原始索引
         indexed_dataset = IndexedDataset(dataset_to_use)
         
-        # NEW: 定义一个处理索引的 collator
-        def indexed_collator_wrapper(features):
-            indices = [f[0] for f in features]
-            original_data = [f[1] for f in features]
-            collated_batch = self.data_collator(original_data)
-            return {'indices': torch.tensor(indices), 'batch': collated_batch}
+        # 定义一个处理索引的 collator
+        if rl_mode:
+            def indexed_collator_wrapper(features):
+                indices = [f[0] for f in features]
+                original_data = [f[1] for f in features]
+                return {'indices': torch.tensor(indices), 'examples': original_data}
+        else:
+            def indexed_collator_wrapper(features):
+                indices = [f[0] for f in features]
+                original_data = [f[1] for f in features]
+                collated_batch = self.data_collator(original_data)
+                return {'indices': torch.tensor(indices), 'batch': collated_batch}
 
         dataloader = DataLoader(
             indexed_dataset,
@@ -179,8 +403,7 @@ class LessSelector(Selector):
         dataloader = self.accelerator.prepare(dataloader)
 
         # 4) 设置保存间隔
-        # MODIFIED: 这是每个进程的本地保存间隔
-        save_interval = self.save_interval # 每个进程每处理save_interval个样本就映射并保存一次
+        save_interval = 64
 
         # 5) 断点续传
         max_index = self._get_max_saved_index(save_dir=save_dir)
@@ -196,6 +419,8 @@ class LessSelector(Selector):
         local_indices_to_project = []
         
         total_samples_in_loader = len(dataloader)
+        model_device = next(model.parameters()).device
+
         # enumerate(..., 1) 使 batch_idx 从 1 开始
         for batch_idx, data in enumerate(tqdm(
             dataloader,
@@ -204,6 +429,7 @@ class LessSelector(Selector):
             dynamic_ncols=True,
             position=self.accelerator.process_index,
         ), 1):
+            indices = data['indices']
             
             # 断点续传逻辑，这里的 'count' 应该是全局样本索引
             # DistributedSampler 会自动处理分片，我们只需跳过批次即可
@@ -211,10 +437,31 @@ class LessSelector(Selector):
             # dataloader.sampler.set_epoch(batch_idx) # 如果需要精确重启，可能需要更复杂的sampler状态管理
             # 这里我们简化处理，假设从头开始或不跳过
   
-            indices = data['indices']
-            batch = data['batch']
+            if rl_mode:
+                example = data['examples'][0]
+                mc_gradients = []
+                num_mc = max(1, self.mc_samples)
+                base_seed = self.seed + indices[0].item() * 997
+                for mc_id in range(num_mc):
+                    sample_seed = base_seed + mc_id
+                    sample_info = self._generate_response(example, sample_seed=sample_seed)
+                    reward = self._compute_reward(example, sample_info['prediction'])
+                    grad_vector = self._compute_rl_gradient(model, sample_info, reward, num_params)
+                    mc_gradients.append(grad_vector)
+                if mc_gradients:
+                    vectorized_grads = torch.stack(mc_gradients, dim=0).mean(dim=0)
+                else:
+                    vectorized_grads = torch.zeros(num_params, device=model_device)
+            else:
+                batch = data['batch']
+                vectorized_grads = self._obtain_gradients(
+                    model,
+                    batch,
+                    gradient_type=self.gradient_type,
+                    m=m,
+                    v=v,
+                )
 
-            vectorized_grads = self._obtain_gradients(model, batch, gradient_type, m, v)
             local_grads_to_project.append(vectorized_grads)
             local_indices_to_project.append(indices)
 
@@ -241,7 +488,7 @@ class LessSelector(Selector):
         self.accelerator.wait_for_everyone()
 
 
-    # MODIFIED: 重写合并逻辑
+    # 合并
     def _merge_and_normalize_info(self, save_dir, total_samples):
         """
         在主进程上合并所有分块文件，根据索引重建顺序，然后归一化。
@@ -306,12 +553,13 @@ class LessSelector(Selector):
         self.step_id = step_id
         train_final_grads_path = os.path.join(now_train_save_dir, "all_projected_grads.pt")
         eval_final_grads_path = os.path.join(now_eval_save_dir, "all_projected_grads.pt")
+        
+        optimizer_state = kwargs.get('optimizer_state', None)
 
         # 步骤 1: 计算训练集梯度
         if not os.path.exists(train_final_grads_path):
             os.makedirs(now_train_save_dir, exist_ok=True)
-            optimizer_state = kwargs.get('optimizer_state', None) 
-            self._collect_and_save_projected_gradients(model, now_train_save_dir, self.dataset, self.gradient_type, optimizer_state)
+            self._collect_and_save_projected_gradients(model, now_train_save_dir, self.dataset, optimizer_state, rl_mode=False)
             self._merge_and_normalize_info(now_train_save_dir, len(self.dataset))
         
         self.accelerator.wait_for_everyone()
@@ -319,8 +567,7 @@ class LessSelector(Selector):
         # 步骤 2: 计算验证集梯度
         if not os.path.exists(eval_final_grads_path):
             os.makedirs(now_eval_save_dir, exist_ok=True)
-            # MODIFIED: 传入 eval_dataset
-            self._collect_and_save_projected_gradients(model, now_eval_save_dir, self.eval_dataset, "sgd", None)
+            self._collect_and_save_projected_gradients(model, now_eval_save_dir, self.eval_dataset, optimizer_state, rl_mode=True)
             self._merge_and_normalize_info(now_eval_save_dir, len(self.eval_dataset))
         
         self.accelerator.wait_for_everyone()
