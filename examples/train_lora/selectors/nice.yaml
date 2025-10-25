@@ -1,6 +1,5 @@
 ### model
-model_name_or_path: /mnt/DataFlow/qmy/models/Qwen2.5-1.5B
-# model_name_or_path: meta-llama/Llama-3.1-8B
+model_name_or_path: meta-llama/Llama-3.1-8B
 trust_remote_code: true
 
 ### method
@@ -14,8 +13,7 @@ lora_alpha: 8
 
 ### dataset
 dataset: alpaca_en_demo
-# template: llama3      # choices: [qwen,llama3,...]
-template: qwen
+template: llama3      # choices: [qwen,llama3,...]
 cutoff_len: 4096
 # max_samples: 100000000
 overwrite_cache: true
@@ -59,17 +57,6 @@ component_name: nice
 warmup_step: 10
 update_step: 10
 update_times: 2
-component_overrides:
-  # Policy model and trained model set to the same model is the NICE algorithm in paper, different is the NICEAMC algorithm in paper.
-  # policy_model_path: /path/to/your/policy_model        
-  # Use a strong model, preferably different from policy series.
-  # reward_model_path: /path/to/your/judge_model    
-  policy_model_path: /mnt/DataFlow/qmy/models/Qwen2-1.5B
-  reward_model_path: /mnt/DataFlow/qmy/models/Qwen2.5-1.5B
-  mc_samples: 4
-  max_new_tokens: 512
-  generation_temperature: 0.7
-  max_prompt_length: 4096
 
 eval_dataset: alpaca_zh_demo
 

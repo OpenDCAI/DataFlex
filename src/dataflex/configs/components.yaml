@@ -8,6 +8,15 @@ selectors:
       gradient_type: adam
       proj_dim: 4096
       seed: 123
+      component_overrides:
+      # Policy model and trained model set to the same model is the NICE algorithm in paper, different is the NICEAMC algorithm in paper.
+      policy_model_path: /path/to/your/policy_model        
+      # Use a strong model, preferably different from policy series.
+      reward_model_path: /path/to/your/judge_model    
+      mc_samples: 4
+      max_new_tokens: 512
+      generation_temperature: 0.7
+      max_prompt_length: 4096
 
   less:
     name: less

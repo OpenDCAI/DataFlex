@@ -243,9 +243,6 @@ class WeightTrainer(CustomSeq2SeqTrainer):
             name,
             runtime_vars={}
         )
-        if finetuning_args.component_overrides:
-            # 用weight.yaml覆盖components.yaml
-            sel_params.update(finetuning_args.component_overrides)
             
         # 统一提供“动态运行期依赖”，静态类会自动忽略
         runtime = dict(
