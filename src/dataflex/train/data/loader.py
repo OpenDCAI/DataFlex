@@ -49,6 +49,10 @@ def get_dataset(
     processor: Optional["ProcessorMixin"] = None,
 ) -> "DatasetModule":
     r"""Get the train dataset and optionally gets the evaluation dataset."""
+    logger.info_rank0(f"[DATAFLEX DEBUG] DataFlex get_dataset called with stage={stage}")
+    logger.info_rank0(f"[DATAFLEX DEBUG] data_args.dataset={data_args.dataset}")
+    logger.info_rank0(f"[DATAFLEX DEBUG] data_args.mixture_sample_rule={getattr(data_args, 'mixture_sample_rule', 'NOT_SET')}")
+    logger.info_rank0(f"[DATAFLEX DEBUG] data_args.init_mixture_proportions={getattr(data_args, 'init_mixture_proportions', 'NOT_SET')}")
     # Load tokenized dataset if path exists
     if data_args.tokenized_path is not None:
         if has_tokenized_data(data_args.tokenized_path):
