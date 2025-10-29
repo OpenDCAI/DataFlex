@@ -233,11 +233,18 @@ else:
 
 
 class MixTrainer(CustomSeq2SeqTrainer):
-    def __init__(self, finetuning_args, processor=None, gen_kwargs=None, **kwargs):
+    def __init__(self, finetuning_args, processor=None, gen_kwargs=None, model_args=None, **kwargs):
         # 初始化父类
         self.mixture_manager = kwargs.pop("mixture_manager", None)
-        super().__init__(finetuning_args=finetuning_args, processor=processor, gen_kwargs=gen_kwargs, **kwargs)
-        if self.finetuning_args.static_mix == False:
+        
+        # 兼容PT阶段的初始化参数
+        if gen_kwargs is None and model_args is not None:
+            # PT阶段的初始化
+            super().__init__(finetuning_args=finetuning_args, processor=processor, model_args=model_args, **kwargs)
+        else:
+            # SFT阶段的初始化
+            super().__init__(finetuning_args=finetuning_args, processor=processor, gen_kwargs=gen_kwargs, **kwargs)
+        if self.finetuning_args.static_mix == False and self.mixture_manager is not None:
             name = finetuning_args.component_name
             # 取该 mixer 的 params（可替换 ${output_dir}）
             sel_params = load_component(
@@ -246,7 +253,7 @@ class MixTrainer(CustomSeq2SeqTrainer):
                 name,
                 runtime_vars={}
             )
-
+            sel_params["mixture_manager"] = self.mixture_manager
             # 统一提供“动态运行期依赖”，静态类会自动忽略
             runtime = dict(
                 dataset=self.train_dataset,
@@ -258,8 +265,10 @@ class MixTrainer(CustomSeq2SeqTrainer):
             # 实例化（无任何 if/else）
             self.mixer = REGISTRY.build("mixer", name, runtime=runtime, cfg=sel_params)
             logger.info(f"[Dataflex] mixer={name}, params={sel_params}")
-        else:
+        elif self.mixture_manager is not None:
             logger.info(f"[Dataflex] Using static mix proportions during training.")
+        else:
+            logger.info(f"[Dataflex] No mixture manager available, using standard training.")
         logger.info("[Dataflex] MixTrainer initialized")
 
     @override
@@ -309,7 +318,7 @@ class MixTrainer(CustomSeq2SeqTrainer):
         else:
             data_collator = self._get_collator_with_removed_columns(data_collator, description="training")
         
-        if self.finetuning_args.static_mix == False:
+        if self.finetuning_args.static_mix == False and hasattr(self, 'mixer') and self.mixer is not None:
             self.mixer.data_collator = data_collator
 
         dataloader_params = {
@@ -330,6 +339,10 @@ class MixTrainer(CustomSeq2SeqTrainer):
 
     def print_mixture_info(self, prefix: str = "[Dataflex]"):
         """打印当前混合器的采样信息"""
+        if self.mixture_manager is None:
+            print(f"{prefix} No mixture manager available")
+            return
+            
         rule = self.mixture_manager.sample_rule
         probs = self.mixture_manager._current_probs()
         sources = self.mixture_manager.names
@@ -380,12 +393,15 @@ class MixTrainer(CustomSeq2SeqTrainer):
         # 这里用的是初始的比例，此时train_dataset是None
         
         self.print_mixture_info()
-        if self.finetuning_args.static_mix:
-            logger.info(f"[Dataflex]Initial static mix data with initial mixture proportions.")
-            self.train_dataset = self.mixture_manager.rebuild(num_samples = total_train_batch_size * self.finetuning_args.train_step)
+        if self.mixture_manager is not None:
+            if self.finetuning_args.static_mix:
+                logger.info(f"[Dataflex]Initial static mix data with initial mixture proportions.")
+                self.train_dataset = self.mixture_manager.rebuild(num_samples = total_train_batch_size * self.finetuning_args.train_step)
+            else:
+                logger.info(f"[Dataflex]Initial warmup data with initial mixture proportions.")
+                self.train_dataset = self.mixture_manager.rebuild(num_samples = total_train_batch_size * self.finetuning_args.warmup_step)
         else:
-            logger.info(f"[Dataflex]Initial warmup data with initial mixture proportions.")
-            self.train_dataset = self.mixture_manager.rebuild(num_samples = total_train_batch_size * self.finetuning_args.warmup_step)
+            logger.warning(f"[Dataflex] No mixture manager available, using original train_dataset")
         train_dataloader = self.get_train_dataloader()
         
         if self.is_fsdp_xla_v2_enabled:
@@ -789,14 +805,21 @@ class MixTrainer(CustomSeq2SeqTrainer):
                         extra_args = dict(
                         )
 
-                        probs = self.mixer.mix(
-                            model=model,
-                            step_id=self.state.global_step,
-                            **extra_args
-                        )
+                        if hasattr(self, 'mixer') and self.mixer is not None:
+                            probs = self.mixer.mix(
+                                model=model,
+                                step_id=self.state.global_step,
+                                **extra_args
+                            )
+                        else:
+                            logger.warning(f"[Dataflex] No mixer available, cannot generate new proportions")
+                            continue
 
-                        self.mixture_manager.set_proportions(probs)
-                        self.train_dataset = self.mixture_manager.rebuild(num_samples = total_train_batch_size * self.finetuning_args.update_step)
+                        if self.mixture_manager is not None:
+                            self.mixture_manager.set_proportions(probs)
+                            self.train_dataset = self.mixture_manager.rebuild(num_samples = total_train_batch_size * self.finetuning_args.update_step)
+                        else:
+                            logger.warning(f"[Dataflex] No mixture manager available, cannot update proportions")
                         train_loader = self.get_train_dataloader()
                         current_iterator = iter(train_loader)
 
