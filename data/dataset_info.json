@@ -633,7 +633,7 @@
     }
   },
   "wiki_demo": {
-    "file_name": "wiki_demo.txt",
+    "file_name": "wiki_demo.jsonl",
     "columns": {
       "prompt": "text"
     }

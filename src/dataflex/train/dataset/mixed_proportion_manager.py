@@ -46,6 +46,10 @@ class MixedProportionManager:
         self._seed = seed
         self.rng = np.random.default_rng(seed)
         self.sizes = {k: len(v) for k, v in self.sources.items()}
+        
+        # Store initial proportions for mixers to access
+        self.initial_proportions = proportions.copy() if proportions is not None else None
+        
         self.set_proportions(proportions)
 
     def set_proportions(self, proportions: Optional[List[float]]):

@@ -83,6 +83,14 @@ def patch_trainer(train_type: str):
         # 3) 替换 workflow 内部引用
         wflow = importlib.import_module("llamafactory.train.sft.workflow")
         setattr(wflow, "CustomSeq2SeqTrainer", TrainerCls)
+        
+        # 4) 替换 PT 训练器
+        pt_tmod = importlib.import_module("llamafactory.train.pt.trainer")
+        pt_tmod.CustomTrainer = TrainerCls
+        
+        # 5) 替换 PT workflow 内部引用
+        pt_wflow = importlib.import_module("llamafactory.train.pt.workflow")
+        setattr(pt_wflow, "CustomTrainer", TrainerCls)
 
     print(f"[PatchTrainer] Using trainer type: '{train_type}'")
 
@@ -109,6 +117,10 @@ def patch_get_dataset(do_uncache_reload: bool = False):
     # 4) 就地覆盖已 from-import 的使用方（包含 workflow）
     wflow = importlib.import_module("llamafactory.train.sft.workflow")
     setattr(wflow, "get_dataset", _new_get_dataset)
+    
+    # 5) 也要patch PT workflow
+    pt_wflow = importlib.import_module("llamafactory.train.pt.workflow")
+    setattr(pt_wflow, "get_dataset", _new_get_dataset)
 
 def read_args():
     file_path = sys.argv[1]

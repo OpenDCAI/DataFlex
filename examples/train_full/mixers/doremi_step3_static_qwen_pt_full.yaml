@@ -1,0 +1,79 @@
+### model
+model_name_or_path: /path/to/ckpt/Qwen2.5-0.5B
+trust_remote_code: true
+
+### method
+stage: pt
+do_train: true
+train_from_scratch: true
+finetuning_type: full
+deepspeed: examples/deepspeed/ds_z3_config.json
+flash_attn: fa2
+#deepspeed: examples/deepspeed/ds_z3_config.json  # choices: [ds_z0_config.json, ds_z2_config.json, ds_z3_config.json]
+
+### dataset
+dataset: wiki_demo,c4_demo # for debugging
+template: qwen
+cutoff_len: 2048
+# max_samples: 100000000
+overwrite_cache: true
+preprocessing_num_workers: 128
+dataloader_num_workers: 0
+# disable_shuffling: true
+seed: 42
+
+### output
+output_dir: ../dataflex_saves/Qwen2.5-0.5B/doremi_step3_static_qwen_pt_full_result
+logging_steps: 10
+save_steps: 100
+plot_loss: true
+save_only_model: false
+overwrite_output_dir: true
+
+### swanlab
+report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
+# use_swanlab: true
+# swanlab_project: medical_dynamic_sft
+# swanlab_run_name: qwen2_5_3b_lora_medical_50k_baseline
+# swanlab_workspace: word2li
+# swanlab_api_key: AnLWTMijcbd4cyEfundi3
+# swanlab_lark_webhook_url: https://open.feishu.cn/open-apis/bot/v2/hook/ff10a391-4e51-4481-97ff-965760cae2a1
+# swanlab_lark_secret: cySzwTbCJh08349FGAhBSf
+
+### train
+per_device_train_batch_size: 8
+gradient_accumulation_steps: 1
+learning_rate: 5.0e-5
+num_train_epochs: 1.0
+lr_scheduler_type: linear
+warmup_ratio: 0.05
+bf16: true
+ddp_timeout: 180000000
+
+### dynamic_train - DoReMi Step 3: Large Model Training with Optimized Weights
+train_type: dynamic_mix
+components_cfg_file: src/dataflex/configs/components.yaml
+component_name: static  # 使用静态混合器
+mixture_sample_rule: mixture # 初始采样规则，mixture为根据init_mixture_proportions比例混合
+init_mixture_proportions: [0.3, 0.7] # 使用从DoReMi Step 2优化得到的权重，例如：[0.3, 0.7] 
+static_mix: true
+warmup_step: 100
+update_step: 200
+update_times: 3
+
+# eval_dataset: mmlu_eval # TODO: Undefined dataset mmlu_eval in dataset_info.json.
+# eval_dataset: alpaca_zh_demo  # SFT format, not suitable for PT
+eval_dataset: c4_demo  # Use PT-compatible dataset for evaluation
+
+
+## eval
+# val_size: 0.001
+# per_device_eval_batch_size: 1
+# eval_strategy: steps
+# eval_steps: 1000
+
+# Cannot specify `val_size` if `eval_dataset` is not None
+# val_size: 0.1  # Use 10% of data for validation
+# per_device_eval_batch_size: 1
+# eval_strategy: steps
+# eval_steps: 100

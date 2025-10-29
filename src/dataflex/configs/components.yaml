@@ -59,6 +59,34 @@ mixers:
     name: random
     params:
       seed: 42
+  
+  doremi:
+    name: doremi
+    params:
+      # Path to the reference model checkpoint (Step 1 of DoReMi)
+      # reference_model_path: /path/to/ckpt/Qwen2.5-0.5B
+      reference_model_path: /path/to/dataflex_saves/Qwen2.5-0.5B/doremi_step1_static_qwen_pt_full_result/checkpoint-xxx
+      # # Set to null if no reference model available
+      # reference_model_path: null
+      # # Use proxy model as reference (for cases where no separate reference model exists)
+      # use_proxy_as_reference: true
+      # Learning rate for domain weight updates (eta in the paper)
+      reweight_eta: 1.0
+      # Smoothing parameter for domain weights (epsilon in the paper)
+      reweight_eps: 1e-3
+      # Number of samples to evaluate per domain
+      num_eval_samples: 1000
+      # Batch size for computing excess loss
+      eval_batch_size: 8
+  
+  # 静态数据混合器 - 用于DoReMi算法的Step 1和Step 3
+  static:
+    name: static
+    params:
+      # 固定比例，如果不指定则使用均匀分布
+      proportions: [0.5, 0.5]  # 对应各个域的比例
+      # proportions: null  # 使用均匀分布
+      # proportions: [0.541, 0.287, 0.042, 0.037, 0.034, 0.031, 0.028] # For SlimePajama-6B dataset
 
 weighters:
   # 动态数据加权器
