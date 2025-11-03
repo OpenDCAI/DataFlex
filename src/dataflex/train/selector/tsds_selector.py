@@ -9,6 +9,10 @@ import torch
 import faiss
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer,DataCollatorWithPadding,AutoModel
+from tqdm import tqdm
+from tqdm.auto import tqdm
+
+import torch.nn.functional as F
 
 # Faiss IVFFlat索引封装类
 class FaissIndexIVFFlat:
@@ -42,7 +46,6 @@ class TsdsSelector(Selector):
                  alpha: float = 0.5,
                  C: float = 10.0,
                  sample_size: int = 1000,
-                 ###需要另外加载模型
                  model_name: str = "/home/lianghao/yry/TSDS/bert_chinese"):
         
         super().__init__(dataset, accelerator, data_collator, cache_dir)
@@ -64,80 +67,185 @@ class TsdsSelector(Selector):
 
         os.makedirs(self.cache_dir, exist_ok=True)
         logger.info(f"TsdsSelector initialized. Projected gradients will be saved in {self.cache_dir}")
-
-        # ==== 编码候选文本 ====
-    def candidate_sentence_embedding(self, batch_size=32):
-        embeddings_list = []
-        self.dataset = self.dataset.remove_columns(["labels", "images", "videos", "audios"])
-        model = AutoModel.from_pretrained(self.model_name).to("cuda")
-        model.eval()
-        # 创建collator（自动pad）
-        tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        data_collator = DataCollatorWithPadding(tokenizer=tokenizer, return_tensors="pt")
-        dataloader = DataLoader(self.dataset, batch_size=batch_size, shuffle=False, collate_fn=data_collator)
-        for batch in dataloader:
-            input_ids = batch['input_ids']
-            attention_mask = batch['attention_mask']
-            # token长度限制在512以内 
-            input_ids = input_ids.long()
-            max_len = 512
-            input_ids = input_ids[:, :max_len]
-            attention_mask = attention_mask[:, :max_len]
-            # 替换小于0或大于等于vocab_size的token为pad_token_id
-            input_ids[input_ids < 0] = tokenizer.pad_token_id
-            input_ids[input_ids >= tokenizer.vocab_size] = tokenizer.pad_token_id
-            input_ids = input_ids.to(self.device)
-            attention_mask = attention_mask.to(self.device)
-            # 计算句向量 
-            with torch.no_grad():
-                outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-                # 平均池化得到句向量（忽略 padding token）
-                last_hidden = outputs.last_hidden_state  # [batch_size, seq_len, hidden_dim]
-                mask = attention_mask.unsqueeze(-1)     # [batch_size, seq_len, 1]
-                batch_embeddings = (last_hidden * mask).sum(dim=1)
-                batch_embeddings = batch_embeddings / mask.sum(dim=1).clamp(min=1)
-            embeddings_list.append(batch_embeddings.cpu())
-        # 合并 batch，转成tsds需要的numpy格式
-        embeddings = torch.cat(embeddings_list, dim=0)  # [num_samples, hidden_dim]
-        return embeddings.numpy()
     
-        # ==== 编码查询文本 ====
-    def query_sentence_embedding(self, batch_size=32):
-        embeddings_list = []
-        self.eval_dataset = self.eval_dataset.remove_columns(["labels", "images", "videos", "audios"])
-        model = AutoModel.from_pretrained(self.model_name).to("cuda")
+    def candidate_sentence_embedding(self, batch_size=32, max_len=512, num_workers=0):
+        # 1) 仅保留需要列
+        keep_columns = ["input_ids", "attention_mask"]
+        if hasattr(self.dataset, "column_names"):
+            self.dataset = self.dataset.remove_columns([c for c in self.dataset.column_names if c not in keep_columns])
+
+        #  2) 展平可能的 list-of-lists
+        def _explode(batch):
+            ids_list, msk_list = batch["input_ids"], batch["attention_mask"]
+            out_ids, out_msk = [], []
+            for ids, msk in zip(ids_list, msk_list):
+                if len(ids) > 0 and isinstance(ids[0], list):
+                    # 多段序列，逐段展开
+                    for xi, mi in zip(ids, msk):
+                        out_ids.append(xi)
+                        out_msk.append(mi)
+                else:
+                    out_ids.append(ids)
+                    out_msk.append(msk)
+            return {"input_ids": out_ids, "attention_mask": out_msk}
+
+        # batched=True 以便一次性展开多条
+        if hasattr(self.dataset, "map"):
+            self.dataset = self.dataset.map(_explode, batched=True, remove_columns=[])
+
+        #  3) 设备 / 分词器 / 模型 
+        device = torch.device(getattr(self, "device", "cuda" if torch.cuda.is_available() else "cpu"))
+        tokenizer = AutoTokenizer.from_pretrained(self.model_name, use_fast=True)
+        if tokenizer.pad_token_id is None:
+            tokenizer.pad_token = tokenizer.eos_token if tokenizer.eos_token else "[PAD]"
+
+        model = AutoModel.from_pretrained(self.model_name).to(device)
         model.eval()
-        # 创建collator（自动pad）
-        tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        data_collator = DataCollatorWithPadding(tokenizer=tokenizer, return_tensors="pt")
-        dataloader = DataLoader(self.eval_dataset, batch_size=batch_size, shuffle=False, collate_fn=data_collator)
-        for batch in dataloader:
-            input_ids = batch['input_ids']
-            attention_mask = batch['attention_mask']
-            # token长度限制在512以内
-            input_ids = input_ids.long()
-            max_len = 512
-            input_ids = input_ids[:, :max_len]
-            attention_mask = attention_mask[:, :max_len]
-            # 替换小于0或大于等于vocab_size的token为pad_token_id
-            input_ids[input_ids < 0] = tokenizer.pad_token_id
-            input_ids[input_ids >= tokenizer.vocab_size] = tokenizer.pad_token_id
-            input_ids = input_ids.to(self.device)
-            attention_mask = attention_mask.to(self.device)
 
-            # 计算句向量 
-            with torch.no_grad():
-                outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-                # 平均池化得到句向量（忽略 padding token）
-                last_hidden = outputs.last_hidden_state  # [batch_size, seq_len, hidden_dim]
-                mask = attention_mask.unsqueeze(-1)     # [batch_size, seq_len, 1]
-                batch_embeddings = (last_hidden * mask).sum(dim=1)
-                batch_embeddings = batch_embeddings / mask.sum(dim=1).clamp(min=1)
+        #  4) 自定义 collate：手动截断 + 修正越界 token + 固定长度 pad 
+        def collate(features):
+            proc = []
+            V = tokenizer.vocab_size
+            pad_id = tokenizer.pad_token_id
+            for f in features:
+                ids = f["input_ids"][:max_len]
+                msk = f["attention_mask"][:max_len]
 
-            embeddings_list.append(batch_embeddings.cpu())
+                # 修正非法 token：小于 0 或 >= vocab_size 的都替换为 pad
+                ids = [t if (isinstance(t, int) and 0 <= t < V) else pad_id for t in ids]
+                if len(msk) != len(ids):
+                    msk = msk[:len(ids)]
+                    if len(msk) < len(ids):
+                        msk = msk + [0] * (len(ids) - len(msk))
 
-        # 合并 batch，转成tsds需要的numpy格式
-        embeddings = torch.cat(embeddings_list, dim=0)  # [num_samples, hidden_dim]
+                proc.append({"input_ids": ids, "attention_mask": msk})
+
+            return tokenizer.pad(
+                proc,
+                padding="max_length",
+                max_length=max_len,
+                return_tensors="pt",
+            )
+
+        dataloader = DataLoader(
+            self.dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            collate_fn=collate,
+            num_workers=num_workers,
+            pin_memory=(device.type == "cuda"),
+        )
+
+        # 5) 前向 + mask 平均池化 
+        embeddings_list = []
+        with torch.inference_mode():
+            for batch in tqdm(dataloader, desc="Encoding sentences", unit="batch"):
+                input_ids = batch["input_ids"].to(device, non_blocking=True)
+                attention_mask = batch["attention_mask"].to(device, non_blocking=True)
+
+                out = model(input_ids=input_ids, attention_mask=attention_mask)
+                last_hidden = out.last_hidden_state                         # [B, L, H]
+                mask = attention_mask.unsqueeze(-1).to(last_hidden.dtype)   # [B, L, 1]
+                summed = (last_hidden * mask).sum(dim=1)                    # [B, H]
+                lengths = mask.sum(dim=1).clamp(min=1)                      # [B, 1]
+                sent_emb = summed / lengths                                  # [B, H]
+
+                # L2 归一化
+                sent_emb = F.normalize(sent_emb, p=2, dim=1)
+
+                embeddings_list.append(sent_emb.cpu())
+
+        embeddings = torch.cat(embeddings_list, dim=0)  # [N, H]
+        return embeddings.numpy()
+
+    def query_sentence_embedding(self, batch_size=32, max_len=512, num_workers=0):
+        #  1) 仅保留需要列 
+        keep_columns = ["input_ids", "attention_mask"]
+        if hasattr(self.eval_dataset, "column_names"):
+            self.eval_dataset = self.eval_dataset.remove_columns([c for c in self.dataset.column_names if c not in keep_columns])
+
+        #  2) 展平可能的 list-of-lists
+        def _explode(batch):
+            ids_list, msk_list = batch["input_ids"], batch["attention_mask"]
+            out_ids, out_msk = [], []
+            for ids, msk in zip(ids_list, msk_list):
+                if len(ids) > 0 and isinstance(ids[0], list):
+                    # 多段序列，逐段展开
+                    for xi, mi in zip(ids, msk):
+                        out_ids.append(xi)
+                        out_msk.append(mi)
+                else:
+                    out_ids.append(ids)
+                    out_msk.append(msk)
+            return {"input_ids": out_ids, "attention_mask": out_msk}
+
+        # batched=True 以便一次性展开多条
+        if hasattr(self.eval_dataset, "map"):
+            self.eval_dataset = self.eval_dataset.map(_explode, batched=True, remove_columns=[])
+
+        #  3) 设备 / 分词器 / 模型 
+        device = torch.device(getattr(self, "device", "cuda" if torch.cuda.is_available() else "cpu"))
+        tokenizer = AutoTokenizer.from_pretrained(self.model_name, use_fast=True)
+        if tokenizer.pad_token_id is None:
+            tokenizer.pad_token = tokenizer.eos_token if tokenizer.eos_token else "[PAD]"
+
+        model = AutoModel.from_pretrained(self.model_name).to(device)
+        model.eval()
+
+        # 4) 自定义 collate：手动截断 + 修正越界 token + 固定长度 pad
+        def collate(features):
+            proc = []
+            V = tokenizer.vocab_size
+            pad_id = tokenizer.pad_token_id
+            for f in features:
+                ids = f["input_ids"][:max_len]
+                msk = f["attention_mask"][:max_len]
+
+                # 修正非法 token：小于 0 或 >= vocab_size 的都替换为 pad
+                ids = [t if (isinstance(t, int) and 0 <= t < V) else pad_id for t in ids]
+                if len(msk) != len(ids):
+                    msk = msk[:len(ids)]
+                    if len(msk) < len(ids):
+                        msk = msk + [0] * (len(ids) - len(msk))
+
+                proc.append({"input_ids": ids, "attention_mask": msk})
+
+            return tokenizer.pad(
+                proc,
+                padding="max_length",
+                max_length=max_len,
+                return_tensors="pt",
+            )
+
+        dataloader = DataLoader(
+            self.eval_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            collate_fn=collate,
+            num_workers=num_workers,
+            pin_memory=(device.type == "cuda"),
+        )
+
+        #  5) 前向 + mask 平均池化 
+        embeddings_list = []
+        with torch.inference_mode():
+            for batch in tqdm(dataloader, desc="Encoding eval_sentences", unit="batch"):
+                input_ids = batch["input_ids"].to(device, non_blocking=True)
+                attention_mask = batch["attention_mask"].to(device, non_blocking=True)
+
+                out = model(input_ids=input_ids, attention_mask=attention_mask)
+                last_hidden = out.last_hidden_state                         # [B, L, H]
+                mask = attention_mask.unsqueeze(-1).to(last_hidden.dtype)   # [B, L, 1]
+                summed = (last_hidden * mask).sum(dim=1)                    # [B, H]
+                lengths = mask.sum(dim=1).clamp(min=1)                      # [B, 1]
+                sent_emb = summed / lengths                                  # [B, H]
+
+                # L2 归一化
+                sent_emb = F.normalize(sent_emb, p=2, dim=1)
+
+                embeddings_list.append(sent_emb.cpu())
+
+        embeddings = torch.cat(embeddings_list, dim=0)  # [N, H]
         return embeddings.numpy()
 
     def select(self, model, step_id: int, num_samples: int, **kwargs):
@@ -151,11 +259,13 @@ class TsdsSelector(Selector):
         self.num_samples = num_samples
         
         #==== 1.加载嵌入候选向量====
+        logger.info(f" candidates embedding start...")
         xb = self.candidate_sentence_embedding().astype(np.float32)
         assert xb.ndim == 2, f"Embeddings of the candidates should be in the form of a 2D array."
         logger.info(f"number of candidates: {xb.shape[0]}, embedding dimension: {xb.shape[1]}")
 
         #==== 2.加载嵌入训练向量====
+        logger.info(f" query embedding start...")
         xq = self.query_sentence_embedding().astype(np.float32)
         assert xq.ndim == 2, f"Embeddings of the query examples should be in the form of a 2D array."
         logger.info(f"number of query examples: {xq.shape[0]}, embedding dimension: {xq.shape[1]}")
