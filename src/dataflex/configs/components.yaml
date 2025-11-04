@@ -47,7 +47,12 @@ selectors:
       C: 10.0
       model_name: "/home/lianghao/yry/TSDS/bert_chinese"
       cache_dir: ../dataflex_saves/tsds_output
-      
+
+  zeroth:
+    name: zeroth
+    params:
+      cache_dir: ../dataflex_saves/zeroth_output
+  
   custom:
     name: custom
     params:

@@ -1,6 +1,6 @@
 from dataflex.core.registry import register_selector
-from .base_selector import Selector, logger
-
+from .base_selector import Selector
+from dataflex.utils.logging import logger
 import torch
 from torch.nn.functional import normalize
 from typing import List, Dict, Optional
@@ -91,27 +91,27 @@ class ZerothSelector(Selector):
     def _obtain_project_grads(self,model, dataset_to_use,save_dir):
         # 构造 DataLoader
         # NEW: 使用 IndexedDataset 来追踪样本的原始索引
-        indexed_dataset = IndexedDataset(dataset_to_use)
-        
-        # NEW: 定义一个处理索引的 collator
-        def indexed_collator_wrapper(features):
-            indices = [f[0] for f in features]
-            original_data = [f[1] for f in features]
-            collated_batch = self.data_collator(original_data)
-            return {'indices': torch.tensor(indices), 'batch': collated_batch}
-
-        dataloader = DataLoader(
-            indexed_dataset,
-            batch_size=1, # 仍然是逐样本计算
-            shuffle=False,
-            num_workers=2,
-            collate_fn=indexed_collator_wrapper,
-        )
-        dataloader = self.accelerator.prepare(dataloader)
-
-        self.accelerator.wait_for_everyone()
-
         with torch.inference_mode():
+            indexed_dataset = IndexedDataset(dataset_to_use)
+            
+            # NEW: 定义一个处理索引的 collator
+            def indexed_collator_wrapper(features):
+                indices = [f[0] for f in features]
+                original_data = [f[1] for f in features]
+                collated_batch = self.data_collator(original_data)
+                return {'indices': torch.tensor(indices), 'batch': collated_batch}
+
+            dataloader = DataLoader(
+                indexed_dataset,
+                batch_size=4, # 仍然是逐样本计算
+                shuffle=False,
+                num_workers=2,
+                collate_fn=indexed_collator_wrapper,
+            )
+            dataloader = self.accelerator.prepare(dataloader)
+
+            self.accelerator.wait_for_everyone()
+
             # 6) 循环计算、投影和保存 (在每个进程上独立进行)
             local_grads_to_project = []
             local_indices_to_project = []
@@ -138,7 +138,7 @@ class ZerothSelector(Selector):
                 local_grads_to_project.append(project_value)
                 local_indices_to_project.append(indices)
             
-            grads_tensor = torch.stack(local_grads_to_project)
+            grads_tensor = torch.cat(local_grads_to_project)
             indices_tensor = torch.cat(local_indices_to_project)
             save_path = os.path.join(save_dir, f"grads-{indices_tensor.max().item()}-rank{self.accelerator.process_index}.pt")
             torch.save({'grads': grads_tensor, 'indices': indices_tensor.cpu()}, save_path)

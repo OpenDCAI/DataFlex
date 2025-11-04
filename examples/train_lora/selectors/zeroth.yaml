@@ -12,10 +12,11 @@ lora_alpha: 8
 #deepspeed: examples/deepspeed/ds_z3_config.json  # choices: [ds_z0_config.json, ds_z2_config.json, ds_z3_config.json]
 
 ### dataset
-dataset: alpaca_en_demo
+#dataset: alpaca_en_demo
 #dataset: flan_v2,cot_data,dolly_data,oasst1_data
+dataset: flan_v2
 #dataset_dir: /data1/xlyang/Flex/datasets
-#eval_dataset: mmlu_eval
+eval_dataset: mmlu_eval
 template: qwen
 cutoff_len: 4096
 # max_samples: 100000000
@@ -27,7 +28,7 @@ seed: 42
 
 ### output
 output_dir: /data1/xlyang/Flex/saves/zeroth/
-logging_steps: 10
+logging_steps: 1
 save_steps: 100
 plot_loss: true
 save_only_model: false
@@ -45,27 +46,26 @@ report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
 
 ### train
 per_device_train_batch_size: 2
-gradient_accumulation_steps: 16
+gradient_accumulation_steps: 1
 learning_rate: 1.0e-4
 num_train_epochs: 1.0
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
-bf16: false
-fp16: true
+bf16: true
 ddp_timeout: 180000000
 
 ### dynamic_train
 train_type: dynamic_select
 components_cfg_file: src/dataflex/configs/components.yaml
 component_name: zeroth
-warmup_step: 4
-update_step: 3
-update_times: 2
+warmup_step: 30
+update_step: 30
+update_times: 10
 
-eval_dataset: alpaca_zh_demo
+#eval_dataset: alpaca_zh_demo
 
 ## eval
 # val_size: 0.001
-# per_device_eval_batch_size: 1
-# eval_strategy: steps
-# eval_steps: 1000
+per_device_eval_batch_size: 8
+eval_strategy: steps
+eval_steps: 1000
