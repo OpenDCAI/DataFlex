@@ -43,7 +43,7 @@ DataFlex 可与 LlamaFactory 无缝集成，为研究人员和开发者提供更
 git clone https://github.com/OpenDCAI/DataFlex-Preview.git
 cd DataFlex-Preview
 pip install -e .
-pip install llamafactory
+pip install llamafactory==0.9.3
 ```
 
 ---
