@@ -1,352 +1,45 @@
+import os
+import numpy as np
 from dataflex.core.registry import register_selector
 from dataflex.utils.logging import logger
 from .base_selector import Selector
-import numpy as np
-from sentence_transformers import SentenceTransformer
-import os
-import heapq
-import torch
-import faiss
-from torch.utils.data import DataLoader
-from transformers import AutoTokenizer,DataCollatorWithPadding,AutoModel
-from tqdm import tqdm
-from tqdm.auto import tqdm
 
-import torch.nn.functional as F
-
-# Faiss IVFFlat索引封装类
-class FaissIndexIVFFlat:
-    def __init__(self, data, nprobe=10):
-        self.build(data, nprobe)
-
-    def build(self, data, nprobe):
-        nlist = int(np.sqrt(data.shape[0])) // 2
-        quantizer = faiss.IndexFlatL2(data.shape[-1])
-        self.index = faiss.IndexIVFFlat(quantizer, data.shape[-1], nlist)
-        self.index.train(data)
-        self.index.add(data)
-        self.index.nprobe = nprobe
-
-    def search(self, query, K):
-        return self.index.search(query, K)
-
-@register_selector('tsds')
-class TsdsSelector(Selector):
-    # TSDS选择器
-    def __init__(self, 
-                 dataset, 
-                 eval_dataset,
-                 accelerator, 
-                 data_collator,
-                 cache_dir,
-                 seed: int = 42,
-                 max_K: int = 128,
-                 kde_K: int = 64,
-                 sigma: float = 1.0,
-                 alpha: float = 0.5,
-                 C: float = 10.0,
-                 sample_size: int = 1000,
-                 model_name: str = "/home/lianghao/yry/TSDS/bert_chinese"):
-        
+@register_selector("tsds")
+class tsds_Selector(Selector):
+    ###一个基于外部 TSDS 概率文件（.npy）进行采样的数据选择器。
+    def __init__(
+        self,
+        dataset,
+        accelerator,
+        data_collator,
+        cache_dir,
+        probs_path: str = None,
+    ): 
         super().__init__(dataset, accelerator, data_collator, cache_dir)
-        self.eval_dataset = eval_dataset
-        # tsds可调超参
-        self.max_K = max_K
-        self.kde_K = kde_K
-        self.sigma = sigma
-        self.alpha = alpha
-        self.C = C
+        self.probs_path = probs_path
 
-        self.sample_size = sample_size
-        self.seed = seed
-        self.device = self.accelerator.device
-        self.dtype = torch.float16
+        if not probs_path or not os.path.exists(probs_path):
+            raise FileNotFoundError(f"TSDS概率文件 {probs_path} 不存在！")
+        self.probs = np.load(probs_path)
+        logger.info(f"[tsds_selector] Loaded probabilities from: {probs_path}")
+        logger.info(f"[tsds_selector] Probs shape: {self.probs.shape}")
 
-        # 数据编码模型
-        self.model_name = model_name
-
-        os.makedirs(self.cache_dir, exist_ok=True)
-        logger.info(f"TsdsSelector initialized. Projected gradients will be saved in {self.cache_dir}")
-    
-    def candidate_sentence_embedding(self, batch_size=32, max_len=512, num_workers=0):
-        # 1) 仅保留需要列
-        keep_columns = ["input_ids", "attention_mask"]
-        if hasattr(self.dataset, "column_names"):
-            self.dataset = self.dataset.remove_columns([c for c in self.dataset.column_names if c not in keep_columns])
-
-        #  2) 展平可能的 list-of-lists
-        def _explode(batch):
-            ids_list, msk_list = batch["input_ids"], batch["attention_mask"]
-            out_ids, out_msk = [], []
-            for ids, msk in zip(ids_list, msk_list):
-                if len(ids) > 0 and isinstance(ids[0], list):
-                    # 多段序列，逐段展开
-                    for xi, mi in zip(ids, msk):
-                        out_ids.append(xi)
-                        out_msk.append(mi)
-                else:
-                    out_ids.append(ids)
-                    out_msk.append(msk)
-            return {"input_ids": out_ids, "attention_mask": out_msk}
-
-        # batched=True 以便一次性展开多条
-        if hasattr(self.dataset, "map"):
-            self.dataset = self.dataset.map(_explode, batched=True, remove_columns=[])
-
-        #  3) 设备 / 分词器 / 模型 
-        device = torch.device(getattr(self, "device", "cuda" if torch.cuda.is_available() else "cpu"))
-        tokenizer = AutoTokenizer.from_pretrained(self.model_name, use_fast=True)
-        if tokenizer.pad_token_id is None:
-            tokenizer.pad_token = tokenizer.eos_token if tokenizer.eos_token else "[PAD]"
-
-        model = AutoModel.from_pretrained(self.model_name).to(device)
-        model.eval()
-
-        #  4) 自定义 collate：手动截断 + 修正越界 token + 固定长度 pad 
-        def collate(features):
-            proc = []
-            V = tokenizer.vocab_size
-            pad_id = tokenizer.pad_token_id
-            for f in features:
-                ids = f["input_ids"][:max_len]
-                msk = f["attention_mask"][:max_len]
-
-                # 修正非法 token：小于 0 或 >= vocab_size 的都替换为 pad
-                ids = [t if (isinstance(t, int) and 0 <= t < V) else pad_id for t in ids]
-                if len(msk) != len(ids):
-                    msk = msk[:len(ids)]
-                    if len(msk) < len(ids):
-                        msk = msk + [0] * (len(ids) - len(msk))
-
-                proc.append({"input_ids": ids, "attention_mask": msk})
-
-            return tokenizer.pad(
-                proc,
-                padding="max_length",
-                max_length=max_len,
-                return_tensors="pt",
+        if len(self.probs) != len(self.dataset):
+            raise ValueError(
+                f"概率长度 {len(self.probs)} 与数据集长度 {len(self.dataset)} 不一致！"
             )
-
-        dataloader = DataLoader(
-            self.dataset,
-            batch_size=batch_size,
-            shuffle=False,
-            collate_fn=collate,
-            num_workers=num_workers,
-            pin_memory=(device.type == "cuda"),
-        )
-
-        # 5) 前向 + mask 平均池化 
-        embeddings_list = []
-        with torch.inference_mode():
-            for batch in tqdm(dataloader, desc="Encoding sentences", unit="batch"):
-                input_ids = batch["input_ids"].to(device, non_blocking=True)
-                attention_mask = batch["attention_mask"].to(device, non_blocking=True)
-
-                out = model(input_ids=input_ids, attention_mask=attention_mask)
-                last_hidden = out.last_hidden_state                         # [B, L, H]
-                mask = attention_mask.unsqueeze(-1).to(last_hidden.dtype)   # [B, L, 1]
-                summed = (last_hidden * mask).sum(dim=1)                    # [B, H]
-                lengths = mask.sum(dim=1).clamp(min=1)                      # [B, 1]
-                sent_emb = summed / lengths                                  # [B, H]
-
-                # L2 归一化
-                sent_emb = F.normalize(sent_emb, p=2, dim=1)
-
-                embeddings_list.append(sent_emb.cpu())
-
-        embeddings = torch.cat(embeddings_list, dim=0)  # [N, H]
-        return embeddings.numpy()
-
-    def query_sentence_embedding(self, batch_size=32, max_len=512, num_workers=0):
-        #  1) 仅保留需要列 
-        keep_columns = ["input_ids", "attention_mask"]
-        if hasattr(self.eval_dataset, "column_names"):
-            self.eval_dataset = self.eval_dataset.remove_columns([c for c in self.dataset.column_names if c not in keep_columns])
-
-        #  2) 展平可能的 list-of-lists
-        def _explode(batch):
-            ids_list, msk_list = batch["input_ids"], batch["attention_mask"]
-            out_ids, out_msk = [], []
-            for ids, msk in zip(ids_list, msk_list):
-                if len(ids) > 0 and isinstance(ids[0], list):
-                    # 多段序列，逐段展开
-                    for xi, mi in zip(ids, msk):
-                        out_ids.append(xi)
-                        out_msk.append(mi)
-                else:
-                    out_ids.append(ids)
-                    out_msk.append(msk)
-            return {"input_ids": out_ids, "attention_mask": out_msk}
-
-        # batched=True 以便一次性展开多条
-        if hasattr(self.eval_dataset, "map"):
-            self.eval_dataset = self.eval_dataset.map(_explode, batched=True, remove_columns=[])
-
-        #  3) 设备 / 分词器 / 模型 
-        device = torch.device(getattr(self, "device", "cuda" if torch.cuda.is_available() else "cpu"))
-        tokenizer = AutoTokenizer.from_pretrained(self.model_name, use_fast=True)
-        if tokenizer.pad_token_id is None:
-            tokenizer.pad_token = tokenizer.eos_token if tokenizer.eos_token else "[PAD]"
-
-        model = AutoModel.from_pretrained(self.model_name).to(device)
-        model.eval()
-
-        # 4) 自定义 collate：手动截断 + 修正越界 token + 固定长度 pad
-        def collate(features):
-            proc = []
-            V = tokenizer.vocab_size
-            pad_id = tokenizer.pad_token_id
-            for f in features:
-                ids = f["input_ids"][:max_len]
-                msk = f["attention_mask"][:max_len]
-
-                # 修正非法 token：小于 0 或 >= vocab_size 的都替换为 pad
-                ids = [t if (isinstance(t, int) and 0 <= t < V) else pad_id for t in ids]
-                if len(msk) != len(ids):
-                    msk = msk[:len(ids)]
-                    if len(msk) < len(ids):
-                        msk = msk + [0] * (len(ids) - len(msk))
-
-                proc.append({"input_ids": ids, "attention_mask": msk})
-
-            return tokenizer.pad(
-                proc,
-                padding="max_length",
-                max_length=max_len,
-                return_tensors="pt",
-            )
-
-        dataloader = DataLoader(
-            self.eval_dataset,
-            batch_size=batch_size,
-            shuffle=False,
-            collate_fn=collate,
-            num_workers=num_workers,
-            pin_memory=(device.type == "cuda"),
-        )
-
-        #  5) 前向 + mask 平均池化 
-        embeddings_list = []
-        with torch.inference_mode():
-            for batch in tqdm(dataloader, desc="Encoding eval_sentences", unit="batch"):
-                input_ids = batch["input_ids"].to(device, non_blocking=True)
-                attention_mask = batch["attention_mask"].to(device, non_blocking=True)
-
-                out = model(input_ids=input_ids, attention_mask=attention_mask)
-                last_hidden = out.last_hidden_state                         # [B, L, H]
-                mask = attention_mask.unsqueeze(-1).to(last_hidden.dtype)   # [B, L, 1]
-                summed = (last_hidden * mask).sum(dim=1)                    # [B, H]
-                lengths = mask.sum(dim=1).clamp(min=1)                      # [B, 1]
-                sent_emb = summed / lengths                                  # [B, H]
-
-                # L2 归一化
-                sent_emb = F.normalize(sent_emb, p=2, dim=1)
-
-                embeddings_list.append(sent_emb.cpu())
-
-        embeddings = torch.cat(embeddings_list, dim=0)  # [N, H]
-        return embeddings.numpy()
+        logger.info("[tsds_Selector] Initialization complete.")
 
     def select(self, model, step_id: int, num_samples: int, **kwargs):
-
-        SAMPLE_SIZE = self.sample_size
-        MAX_K = self.max_K
-        KDE_K = self.kde_K
-        SIGMA = self.sigma
-        ALPHA = self.alpha
-        C = self.C
-        self.num_samples = num_samples
         
-        #==== 1.加载嵌入候选向量====
-        logger.info(f" candidates embedding start...")
-        xb = self.candidate_sentence_embedding().astype(np.float32)
-        assert xb.ndim == 2, f"Embeddings of the candidates should be in the form of a 2D array."
-        logger.info(f"number of candidates: {xb.shape[0]}, embedding dimension: {xb.shape[1]}")
-
-        #==== 2.加载嵌入训练向量====
-        logger.info(f" query embedding start...")
-        xq = self.query_sentence_embedding().astype(np.float32)
-        assert xq.ndim == 2, f"Embeddings of the query examples should be in the form of a 2D array."
-        logger.info(f"number of query examples: {xq.shape[0]}, embedding dimension: {xq.shape[1]}")
-        MAX_K = min(MAX_K, xb.shape[0] // 10)
-        KDE_K = min(KDE_K, xb.shape[0] // 10) 
-
-        # ==== 3.候选样本集建立一个快速相似搜索索引 =====
-        logger.info(f"Starting building index for the candidate examples.")
-        index = FaissIndexIVFFlat(xb)
-
-        #==== 4.对每个目标样本，找出其最近的 MAX_K 个邻居，并计算 KDE =====
-        logger.info(f"Start prefetching {MAX_K}-nearest neighbors for each query example.")
-        top_dists, top_indices = index.search(xq, MAX_K)
-        top_indices = top_indices.astype(int)
-        sorted_indices = np.argsort(top_dists, axis=-1)
-        static_indices = np.indices(top_dists.shape)[0]
-        top_dists = np.sqrt(top_dists[static_indices, sorted_indices])
-        # top_indices[i][j] is the index of the jth nearest neighbor
-        # (among the candidates) of the ith query example
-        top_indices = top_indices[static_indices, sorted_indices]
-        # top_kde[i][j] is the KDE of the jth nearest neighbor of the ith query example
-        if SIGMA == 0:
-            logger.info("Sigma is zero, KDE (kernel density estimation) set to 1 for all the points.")
-            top_kdes = np.ones_like(top_indices)
-        else:
-            logger.info(f"Start computing KDE (kernel density estimation), neighborhood size: {KDE_K}.")
-            top_indices_set = list(set([i for i in top_indices.reshape(-1)]))
-            top_features = xb[top_indices_set]
-            index_for_kde = FaissIndexIVFFlat(top_features)
-            D2, I = index_for_kde.search(top_features, KDE_K)
-            kernel = 1 - D2 / (SIGMA ** 2)
-            logger.info(f'A point has {(kernel > 0).sum(axis=-1).mean() - 1} near-duplicates on average.')
-            kernel = kernel * (kernel > 0)
-            kde = kernel.sum(axis=-1)
-            kde_map = {top_indices_set[i]:kde[i] for i in range(len(top_indices_set))}
-            kde_mapfunc = np.vectorize(lambda t: kde_map[t])
-            top_kdes = kde_mapfunc(top_indices)
-        #==== 5.计算概率分配 =====       
-        logger.info("Start computing the probability assignment.")
-        M, N = top_indices.shape[0], xb.shape[0]
-        lastK = [0] * M
-        heap = [(1.0 / top_kdes[j][0], 0, j) for j in range(M)]
-        heapq.heapify(heap)
-        dist_weighted_sum = [top_dists[j][0] / top_kdes[j][0] for j in range(M)]
-        s = 0
-        cost = np.zeros(M)
-        total_cost = 0
-        while len(heap) > 0:
-            count, curr_k, curr_j = heapq.heappop(heap)
-            s = count
-            # if we increase s by any positive amount, the 0, 1, ..., curr_k has to transport probability mass to curr_k + 1
-            total_cost -= cost[curr_j]
-            cost[curr_j] = top_dists[curr_j][curr_k + 1] * count - dist_weighted_sum[curr_j]
-            total_cost += cost[curr_j]
-            # If the condition breaks, the current s will be the final s
-            if ALPHA / C * total_cost >= (1 - ALPHA) * M:
-                break
-            lastK[curr_j] = curr_k
-            if curr_k < MAX_K - 2:
-                count += 1.0 / top_kdes[curr_j][curr_k + 1]
-                heapq.heappush(heap, (count, curr_k + 1, curr_j))
-                dist_weighted_sum[curr_j] += top_dists[curr_j][curr_k + 1] / top_kdes[curr_j][curr_k + 1]
-        global_probs = np.zeros(N)
-        for j in range(M):
-            prob_sum = 0
-            for k in range(lastK[j] + 1):
-                global_probs[top_indices[j][k]] += 1 / M / s / top_kdes[j][k]
-                prob_sum += 1 / M / s / top_kdes[j][k]
-            global_probs[top_indices[j][lastK[j] + 1]] += max(1.0 / M - prob_sum, 0)
-            assert 1.0 / M - prob_sum >= -1e-6, f'{1.0 / M - prob_sum}'
-            assert (1.0 / M - prob_sum) * top_kdes[j][lastK[j] + 1] * M * s <= 1 + 1e-6 or lastK[j] == MAX_K - 2, f'{(1.0 / M - prob_sum) * top_kdes[j][lastK[j] + 1] * M * s}'
-        
-        #==== 6.按概率分布进行采样 =====
-        logger.info(f"Start sampling. Sample size: {SAMPLE_SIZE}.")
-        global_probs = np.maximum(global_probs, 0)  # 去掉负数
-        global_probs = global_probs / np.sum(global_probs)  # 重新归一化为概率分布
-        sample_times = np.random.multinomial(SAMPLE_SIZE, global_probs)
-        sample_indices = []
-        for i in range(sample_times.shape[0]):
-            sample_indices.extend([i] * sample_times[i])
-        
-        #==== 7.返回最终筛选出的数据索引====
-        logger.info(f"Saving indices of the selected candidates.")
-        return sample_indices
+        logger.info(
+            f"[tsds_selector] Sampling {num_samples} examples using precomputed probs..."
+        )
+        selected_ids = np.random.choice(
+            len(self.probs),
+            size=num_samples,
+            replace=False,
+            p=self.probs,
+        )
+        logger.info(f"[tsds_selector] Sample complete.")
+        return selected_ids.tolist()

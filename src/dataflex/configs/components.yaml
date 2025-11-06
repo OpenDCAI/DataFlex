@@ -40,12 +40,7 @@ selectors:
   tsds:
     name: tsds
     params:
-      max_K: 128
-      kde_K: 64
-      sigma: 0.8
-      alpha: 0.5
-      C: 10.0
-      model_name: "/home/lianghao/yry/TSDS/bert_chinese"
+      probs_path: ./src/dataflex/offline_selector/tsds_probs.npy
       cache_dir: ../dataflex_saves/tsds_output
       
   custom:
