@@ -1,6 +1,9 @@
 
 # DataFlex
 
+<div align="center">
+<img src="https://github.com/user-attachments/assets/935c2537-8cde-44ae-a8e1-c6ec30695810">
+
 [![Documents](https://img.shields.io/badge/官方文档-单击此处-brightgreen?logo=read-the-docs)](https://OpenDCAI.github.io/DataFlex-Doc/)
 [![](https://img.shields.io/github/license/OpenDCAI/DataFlex)](https://github.com/OpenDCAI/DataFlex/blob/main/LICENSE)
 [![](https://img.shields.io/github/stars/OpenDCAI/DataFlex?style=social)](https://github.com/OpenDCAI/DataFlex)
@@ -13,6 +16,8 @@
 🎉 如果你认可我们的项目，欢迎在 GitHub 上点个 ⭐ Star，关注项目最新进展。
 
 简体中文 | [English](./README.md)
+
+</div>
 
 # DataFlex
 
@@ -38,7 +43,7 @@ DataFlex 可与 LlamaFactory 无缝集成，为研究人员和开发者提供更
 git clone https://github.com/OpenDCAI/DataFlex-Preview.git
 cd DataFlex-Preview
 pip install -e .
-pip install llamafactory
+pip install llamafactory==0.9.3
 ```
 
 ---

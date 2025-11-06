@@ -1,6 +1,9 @@
 
 # DataFlex
 
+<div align="center">
+<img src="https://github.com/user-attachments/assets/935c2537-8cde-44ae-a8e1-c6ec30695810">
+
 [![Documents](https://img.shields.io/badge/Documents-Click_here-brightgreen?logo=read-the-docs)](https://OpenDCAI.github.io/DataFlex-Doc/)
 [![](https://img.shields.io/github/license/OpenDCAI/DataFlex)](https://github.com/OpenDCAI/DataFlex/blob/main/LICENSE)
 [![](https://img.shields.io/github/stars/OpenDCAI/DataFlex?style=social)](https://github.com/OpenDCAI/DataFlex)
@@ -10,9 +13,13 @@
 
 <!-- [![](https://img.shields.io/github/last-commit/OpenDCAI/DataFlex)](https://github.com/OpenDCAI/DataFlex/commits/main/) -->
 <!--[![](https://img.shields.io/github/issues-raw/OpenDCAI/DataFlex)](https://github.com/OpenDCAI/DataFlex/issues) -->
+
 🎉 If you like our project, please give us a star ⭐ on GitHub for the latest update.
 
 [简体中文](./README-zh.md) | English
+
+</div>
+
 
 **DataFlex** is an advanced dynamic training framework built on top of [LlamaFactory](https://github.com/hiyouga/LLaMA-Factory).  
 It intelligently schedules data during training, supporting **dynamic sample selection**, **domain ratio adjustment**, and **dynamic weighting**, aiming to improve both training efficiency and final model performance.  
@@ -36,7 +43,7 @@ DataFlex integrates seamlessly with LlamaFactory, offering researchers and devel
 git clone https://github.com/OpenDCAI/DataFlex.git
 cd DataFlex
 pip install -e .
-pip install llamafactory
+pip install llamafactory==0.9.3
 ```
 
 ---
