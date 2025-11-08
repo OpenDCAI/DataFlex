@@ -37,12 +37,20 @@ selectors:
     params:
       cache_dir: ../dataflex_saves/delta_loss_output
       window_size: 0.2
+
   tsds:
     name: tsds
     params:
       probs_path: ./src/dataflex/offline_selector/tsds_probs.npy
       cache_dir: ../dataflex_saves/tsds_output
-      
+  
+  random:
+    name: random
+    params:
+      cache_dir: ../dataflex_saves/random_output
+      seed: 42
+      replacement: false
+
   custom:
     name: custom
     params:
