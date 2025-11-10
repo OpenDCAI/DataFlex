@@ -46,7 +46,7 @@ train_type: dynamic_mix   # 选择训练器类型。可选值包括：
                           # "dynamic_select" - 动态选择训练器
                           # "dynamic_mix" - 动态混合训练器
                           # "dynamic_weight" - 动态加权训练器
-                          # "static" - 默认静态训练器
+                          # "static_full" - 默认静态全量数据训练器
 components_cfg_file: src/dataflex/configs/components.yaml
 component_name: random
 mixture_sample_rule: mixture     # 初始采样规则，mixture为根据init_mixture_proportions比例混合（可动态调整），stratified为固定按源数据集大小比例分层，uniform为固定均匀分布

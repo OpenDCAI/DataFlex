@@ -55,9 +55,11 @@ train_type: dynamic_select   # 选择训练器类型。可选值包括：
                           # "dynamic_select" - 动态选择训练器
                           # "dynamic_mix" - 动态混合训练器
                           # "dynamic_weight" - 动态加权训练器
-                          # "static" - 默认静态训练器
+                          # "static_full" - 默认静态全量数据训练器
 components_cfg_file: src/dataflex/configs/components.yaml
 component_name: loss  # 选择组件名称，对应 components_cfg_file 中定义的组件
 warmup_step: 10
 update_step: 10
 update_times: 2
+
+# FORCE_TORCHRUN=1 DISABLE_VERSION_CHECK=1 dataflex-cli train examples/train_lora/selectors/loss.yaml
