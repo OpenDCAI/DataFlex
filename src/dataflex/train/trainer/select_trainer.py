@@ -769,7 +769,8 @@ class SelectTrainer(CustomSeq2SeqTrainer):
                             optimizer_state=self.optimizer.state,
                             scheduler_state=self.lr_scheduler.state_dict(),
                             current_update_times=current_update_times,
-                            update_times=self.finetuning_args.update_times
+                            update_times=self.finetuning_args.update_times,
+                            tokenizer=self.tokenizer,
                         )
                         new_indices = self.selector.select(
                             model=model,
