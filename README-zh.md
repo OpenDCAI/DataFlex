@@ -65,7 +65,7 @@ FORCE_TORCHRUN=1 DISABLE_VERSION_CHECK=1 dataflex-cli train examples/train_lora/
 
 ```yaml
 # Select Trainer 参数
-train_type: dynamic_select    # [dynamic_select, dynamic_mix, dynamic_weighting, static]
+train_type: dynamic_select    # [dynamic_select, dynamic_mix, dynamic_weighting, static_full]
 component_name: loss          # 选择策略，例如 loss / less
 components_cfg_file: src/dataflex/configs/components.yaml
 warmup_step: 200              # 在第一次选择前的预热步数
@@ -75,7 +75,7 @@ update_times: 2               # 选择操作的执行次数
 
 **参数说明**：
 
-* `train_type`：训练模式（dynamic select / dynamic mix / dynamic weighting / static）。
+* `train_type`：训练模式（dynamic select / dynamic mix / dynamic weighting / static_full）。
 * `component_name`：选择器策略（例如 loss 或 less）。
 * `components_cfg_file`：选择器配置文件路径。
 * `warmup_step`：在第一次选择前的预热步数。

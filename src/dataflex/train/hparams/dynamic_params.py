@@ -515,12 +515,12 @@ class DynamicFinetuningArguments(
     )
     # 动态训练的参数
     train_type: str = field(
-        default="static",
+        default="static_full",
         metadata={
             "help": (
                 "Specifies the type of training to use when `enable_dynamic_train` is True. "
-                "Choices: ['static', 'dynamic_select', 'dynamic_mix', 'dynamic_weighting']. "
-                "If static, uses default LlamaFactory trainer."
+                "Choices: ['static_full', 'dynamic_select', 'dynamic_mix', 'dynamic_weighting']. "
+                "If static_full, uses default LlamaFactory trainer."
             )
         }
     )

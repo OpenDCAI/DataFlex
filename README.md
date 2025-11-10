@@ -65,7 +65,7 @@ Unlike vanilla LlamaFactory, your `.yaml` config file must also include **DataFl
 
 ```yaml
 # Select Trainer parameters
-train_type: dynamic_select    # [dynamic_select, dynamic_mix, dynamic_weighting, static]
+train_type: dynamic_select    # [dynamic_select, dynamic_mix, dynamic_weighting, static_full]
 component_name: loss          # selection strategy, e.g. loss / less
 components_cfg_file: src/dataflex/configs/components.yaml
 warmup_step: 200              # warmup steps before the first selection
@@ -75,7 +75,7 @@ update_times: 2               # number of times selection will be performed
 
 **Parameter Details**:
 
-* `train_type`: Training mode (dynamic select / dynamic mix / dynamic weighting / static).
+* `train_type`: Training mode (dynamic select / dynamic mix / dynamic weighting / static_full).
 * `component_name`: Selector strategy (e.g., loss or less).
 * `components_cfg_file`: Path to the selector’s config file.
 * `warmup_step`: Warmup steps before the first selection.
