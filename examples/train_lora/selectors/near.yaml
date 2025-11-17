@@ -1,0 +1,65 @@
+### model
+model_name_or_path: /model/to/train/
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_target: all
+lora_rank: 32
+lora_alpha: 64
+# deepspeed: examples/deepspeed/ds_z3_config.json  # choices: [ds_z0_config.json, ds_z2_config.json, ds_z3_config.json]
+
+### dataset
+dataset: /dataset/to/train
+template: qwen
+cutoff_len: 4096
+# max_samples: 100000000
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 0
+# disable_shuffling: true
+seed: 42
+
+### output
+output_dir: ../dataflex_saves/qwen2.5-3B/near
+logging_steps: 5
+save_steps: 20
+plot_loss: true
+save_only_model: false
+overwrite_output_dir: true
+
+### swanlab
+report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
+# use_swanlab: true
+# swanlab_project: medical_dynamic_sft
+# swanlab_run_name: qwen2_5_3b_lora_medical_50k_baseline
+# swanlab_workspace: word2li
+# swanlab_api_key: AnLWTMijcbd4cyEfundi3
+# swanlab_lark_webhook_url: https://open.feishu.cn/open-apis/bot/v2/hook/ff10a391-4e51-4481-97ff-965760cae2a1
+# swanlab_lark_secret: cySzwTbCJh08349FGAhBSf
+
+### train
+per_device_train_batch_size: 4
+gradient_accumulation_steps: 16
+learning_rate: 5.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+
+### Dataflex args
+train_type: dynamic_select   # 选择训练器类型。可选值包括：
+                          # "dynamic_select" - 动态选择训练器
+                          # "dynamic_mix" - 动态混合训练器
+                          # "dynamic_weight" - 动态加权训练器
+                          # "static" - 默认静态训练器
+components_cfg_file: src/dataflex/configs/components.yaml
+component_name: near  # 选择组件名称，对应 components_cfg_file 中定义的组件
+warmup_step: 1
+update_step: 25
+update_times: 6
+# eval_dataset: alpaca_zh_demo
+#eval_dataset: mmlu_pro
