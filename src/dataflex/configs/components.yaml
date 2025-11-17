@@ -55,6 +55,11 @@ selectors:
     params:
       probs_path: ./src/dataflex/offline_selector/tsds_probs.npy
       cache_dir: ../dataflex_saves/tsds_output
+  near:
+    name: near
+    params:
+      indices_path: ./src/dataflex/offline_selector/top_indices.npy
+      cache_dir: ../dataflex_saves/near_output
   
   random:
     name: random

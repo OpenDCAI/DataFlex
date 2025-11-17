@@ -5,3 +5,4 @@ from .custom_selector import *
 from .tsds_selector import *
 from .nice_selector import *
 from .random_selector import *
+from .near_selector import *
