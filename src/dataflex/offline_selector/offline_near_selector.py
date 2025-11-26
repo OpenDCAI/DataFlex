@@ -33,9 +33,9 @@ class FaissIndexIVFFlat:
 
 class offline_near_Selector:
     def __init__(self,
-                 candidate_path = "/mnt/DataFlow/yry/DataFlex-origin/data/openhermes_10000.json",
-                 query_path: str = "/mnt/DataFlow/yry/DataFlex-origin/data/mmlu_pro.json",
-                 embed_model: str = "/mnt/DataFlow/yry/model/qwen3-embedding-0.6B",
+                 candidate_path = None,
+                 query_path: str =  None,
+                 embed_model: str = "Qwen/Qwen3-Embedding-0.6B",
                  batch_size: int = 32,
                  save_indices_path: str = "top_indices.npy",
                  max_K: int = 1000):
@@ -136,9 +136,12 @@ class offline_near_Selector:
 
 if __name__ == "__main__":
     near = offline_near_Selector(
-        candidate_path="/mnt/DataFlow/yry/DataFlex-yry/data/openhermes_100000.json",
-        query_path="/mnt/DataFlow/yry/data_new/MMLU__merged.json",
-        embed_model="vllm:/mnt/DataFlow/yry/model/qwen3-embedding-0.6B",
+        candidate_path="OpenDCAI/DataFlex-selector-openhermes-10w", # split = train
+        query_path="OpenDCAI/DataFlex-selector-openhermes-10w", # split = vaildation
+        
+        # If you want to use vllm,please add "vllm:" before model's name
+        # Otherwise it automatically use sentence-transfromer
+        embed_model="vllm:Qwen/Qwen3-Embedding-0.6B",
         batch_size=32,
         save_indices_path="top_indices.npy",
         max_K=1000,
