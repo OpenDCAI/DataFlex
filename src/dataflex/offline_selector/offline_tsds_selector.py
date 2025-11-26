@@ -33,16 +33,16 @@ class FaissIndexIVFFlat:
 
 class offline_tsds_Selector:
     def __init__(self,
-                 candidate_path = "/mnt/DataFlow/yry/DataFlex-origin/data/openhermes_10000.json",
-                 query_path: str = "/mnt/DataFlow/yry/DataFlex-origin/data/mmlu_pro.json",
-                 embed_model: str = "/mnt/DataFlow/yry/model/qwen3-embedding-0.6B",
+                 candidate_path = None,
+                 query_path: str = None,
+                 embed_model: str = "Qwen/Qwen3-Embedding-0.6B",
                  batch_size: int = 32,
                  save_probs_path: str = "tsds_probs.npy",
-                 max_K: int = 128,
-                 kde_K: int = 64,
-                 sigma: float = 0.8,
-                 alpha: float = 0.5,
-                 C: float = 10.0):
+                 max_K: int = 5000,
+                 kde_K: int = 1000,
+                 sigma: float = 0.75,
+                 alpha: float = 0.6,
+                 C: float = 5.0):
         
         self.candidate_path = candidate_path
         self.query_path = query_path
@@ -190,9 +190,12 @@ class offline_tsds_Selector:
 
 if __name__ == "__main__":
     tsds = offline_tsds_Selector(
-        candidate_path="/mnt/DataFlow/yry/DataFlex-yry/data/openhermes_100000.json",
-        query_path="/mnt/DataFlow/yry/data_new/MMLU__merged.json",
-        embed_model="vllm:/mnt/DataFlow/yry/model/qwen3-embedding-0.6B",
+        candidate_path="OpenDCAI/DataFlex-selector-openhermes-10w",
+        query_path="OpenDCAI/DataFlex-selector-openhermes-10w",
+
+        # If you want to use vllm,please add "vllm:" before model's name
+        # Otherwise it automatically use sentence-transfromer
+        embed_model="vllm:Qwen/Qwen3-Embedding-0.6B",
         batch_size=32,
         save_probs_path="tsds_probs.npy",
         max_K=5000,
