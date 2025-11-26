@@ -260,6 +260,7 @@ class MixTrainer(CustomSeq2SeqTrainer):
                 eval_dataset=self.eval_dataset,
                 accelerator=self.accelerator,
                 data_collator=self.data_collator,
+                output_dir=self.args.output_dir,  # Pass output_dir for weight logging
             )
 
             # 实例化（无任何 if/else）
@@ -270,6 +271,101 @@ class MixTrainer(CustomSeq2SeqTrainer):
         else:
             logger.info(f"[Dataflex] No mixture manager available, using standard training.")
         logger.info("[Dataflex] MixTrainer initialized")
+
+    @override
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+        """
+        Override compute_loss to support DoReMi loss reweighting.
+        For DoReMi mixer, apply domain weights α_t to weight losses by domain.
+        """
+        # Check if this is DoReMi mixer that requires loss reweighting
+        is_doremi = (
+            hasattr(self, 'mixer') and 
+            self.mixer is not None and 
+            hasattr(self.mixer, 'get_current_doremi_weights') and
+            self.finetuning_args.static_mix == False
+        )
+        
+        if not is_doremi:
+            # For non-DoReMi mixers, use standard loss computation
+            return super().compute_loss(model, inputs, return_outputs=return_outputs, num_items_in_batch=num_items_in_batch)
+        
+        # DoReMi: Apply domain weight reweighting to losses
+        # Get domain_id from inputs
+        domain_ids = inputs.get('domain_id')
+        if domain_ids is None:
+            # Fallback to standard loss if no domain_id available
+            logger.warning("[DoremiMixer] No domain_id in batch, using standard loss computation")
+            return super().compute_loss(model, inputs, return_outputs=return_outputs, num_items_in_batch=num_items_in_batch)
+        
+        # Get current domain weights α_t
+        domain_weights = self.mixer.get_current_doremi_weights()
+        
+        # Compute standard forward pass
+        if self.label_smoother is not None and "labels" in inputs:
+            labels = inputs.pop("labels")
+        else:
+            labels = None
+        
+        outputs = model(**inputs)
+        
+        # Compute per-sample losses
+        if labels is not None:
+            if hasattr(outputs, "loss") and outputs.loss is not None:
+                # Some models return loss directly, but we need per-sample loss
+                # Recompute with reduction='none'
+                logits = outputs.logits
+                if self.label_smoother is not None:
+                    loss = self.label_smoother(outputs, labels, shift_labels=True)
+                else:
+                    # Compute per-token loss
+                    shift_logits = logits[..., :-1, :].contiguous()
+                    shift_labels = labels[..., 1:].contiguous()
+                    vocab_size = shift_logits.size(-1)
+                    loss_fct = torch.nn.CrossEntropyLoss(reduction='none', ignore_index=-100)
+                    per_token_loss = loss_fct(shift_logits.view(-1, vocab_size), shift_labels.view(-1))
+                    per_token_loss = per_token_loss.view(shift_labels.size())
+                    
+                    # Compute per-sample loss (average over tokens)
+                    valid_mask = (shift_labels != -100)
+                    per_sample_loss = (per_token_loss * valid_mask.float()).sum(dim=1) / valid_mask.sum(dim=1).clamp(min=1)
+            else:
+                if isinstance(outputs, dict) and "loss" not in outputs:
+                    raise ValueError(
+                        "The model did not return a loss from the inputs, only the following keys: "
+                        f"{','.join(outputs.keys())}. For reference, the inputs it received are {','.join(inputs.keys())}."
+                    )
+                loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
+                # If loss is scalar, we can't apply per-sample weighting
+                # This shouldn't happen in DoReMi training
+                logger.warning("[DoremiMixer] Model returned scalar loss, cannot apply per-sample reweighting")
+                return (loss, outputs) if return_outputs else loss
+        else:
+            if isinstance(outputs, dict):
+                loss = outputs["loss"] if "loss" in outputs else outputs["logits"]
+            else:
+                loss = outputs[0]
+            return (loss, outputs) if return_outputs else loss
+        
+        # Apply domain weights to per-sample losses
+        # domain_ids shape: (batch_size,)
+        # per_sample_loss shape: (batch_size,)
+        # domain_weights shape: (num_domains,)
+        device = per_sample_loss.device
+        domain_weights_tensor = torch.tensor(domain_weights, dtype=per_sample_loss.dtype, device=device)
+        
+        # Get weight for each sample based on its domain_id
+        sample_weights = domain_weights_tensor[domain_ids]  # shape: (batch_size,)
+        
+        # Apply weights and compute final loss
+        weighted_loss = (per_sample_loss * sample_weights).mean()
+        
+        if self.accelerator.is_main_process and torch.rand(1).item() < 0.01:  # Log 1% of the time
+            logger.info(f"[DoremiMixer] Loss reweighting - domain_weights: {domain_weights}, "
+                       f"sample mean loss: {per_sample_loss.mean().item():.4f}, "
+                       f"weighted loss: {weighted_loss.item():.4f}")
+        
+        return (weighted_loss, outputs) if return_outputs else weighted_loss
 
     @override
     def _get_train_sampler(self, train_dataset) -> Optional[torch.utils.data.Sampler]:
@@ -396,7 +492,21 @@ class MixTrainer(CustomSeq2SeqTrainer):
         if self.mixture_manager is not None:
             if self.finetuning_args.static_mix:
                 logger.info(f"[Dataflex]Initial static mix data with initial mixture proportions.")
-                self.train_dataset = self.mixture_manager.rebuild(num_samples = total_train_batch_size * self.finetuning_args.train_step)
+                # Calculate training steps based on train_step or num_train_epochs
+                if self.finetuning_args.train_step > 0:
+                    # Use explicitly set train_step
+                    total_steps = self.finetuning_args.train_step
+                    logger.info(f"[Dataflex] Using train_step={total_steps} for static mix training")
+                else:
+                    # Calculate steps from num_train_epochs and available data
+                    # First, get the original dataset size to estimate steps per epoch
+                    original_dataset_size = sum(len(dataset) for dataset in self.mixture_manager.sources.values())
+                    steps_per_epoch = max(1, original_dataset_size // total_train_batch_size)
+                    total_steps = int(steps_per_epoch * args.num_train_epochs)
+                    logger.info(f"[Dataflex] Calculated train_step={total_steps} from num_train_epochs={args.num_train_epochs} "
+                               f"(dataset_size={original_dataset_size}, steps_per_epoch={steps_per_epoch})")
+                
+                self.train_dataset = self.mixture_manager.rebuild(num_samples = total_train_batch_size * total_steps)
             else:
                 logger.info(f"[Dataflex]Initial warmup data with initial mixture proportions.")
                 self.train_dataset = self.mixture_manager.rebuild(num_samples = total_train_batch_size * self.finetuning_args.warmup_step)
@@ -416,9 +526,30 @@ class MixTrainer(CustomSeq2SeqTrainer):
             max_steps,
         ) = self.set_initial_training_values(args, train_dataloader, total_train_batch_size)
         if self.finetuning_args.static_mix:
-            max_steps = self.finetuning_args.train_step
+            if self.finetuning_args.train_step > 0:
+                max_steps = self.finetuning_args.train_step
+            else:
+                # Use the calculated total_steps from above
+                original_dataset_size = sum(len(dataset) for dataset in self.mixture_manager.sources.values())
+                steps_per_epoch = max(1, original_dataset_size // total_train_batch_size)
+                max_steps = int(steps_per_epoch * args.num_train_epochs)
         else:
-            max_steps = (self.finetuning_args.warmup_step + self.finetuning_args.update_step * self.finetuning_args.update_times)
+            # Dynamic mixing: calculate max_steps based on update_times
+            if self.finetuning_args.update_times < 0:
+                # update_times=-1 means update until training finishes
+                # Calculate total steps from num_train_epochs
+                if self.finetuning_args.train_step > 0:
+                    max_steps = self.finetuning_args.train_step
+                    logger.info(f"[Dataflex] Dynamic mix: using train_step={max_steps}")
+                else:
+                    original_dataset_size = sum(len(dataset) for dataset in self.mixture_manager.sources.values())
+                    steps_per_epoch = max(1, original_dataset_size // total_train_batch_size)
+                    max_steps = int(steps_per_epoch * args.num_train_epochs)
+                    logger.info(f"[Dataflex] Dynamic mix: calculated max_steps={max_steps} from num_train_epochs={args.num_train_epochs}")
+            else:
+                # Fixed number of updates
+                max_steps = (self.finetuning_args.warmup_step + self.finetuning_args.update_step * self.finetuning_args.update_times)
+                logger.info(f"[Dataflex] Dynamic mix: max_steps={max_steps} (warmup={self.finetuning_args.warmup_step} + update_step={self.finetuning_args.update_step} * update_times={self.finetuning_args.update_times})")
         epoch_based = False
         logger.info(f"[Dataflex]Set max train steps to {max_steps}")
         logger.info(f"[Dataflex]Set epoch_based = False")
@@ -802,24 +933,22 @@ class MixTrainer(CustomSeq2SeqTrainer):
                         update_times = (self.state.global_step - self.finetuning_args.warmup_step) // self.finetuning_args.update_step + 1
                         logger.info(f"[Dataflex] Model training paused, starting the {update_times}th dynamic data mixture...")
 
+                        # Pass current training batch to mixer for λ_t computation
                         extra_args = dict(
+                            batch=inputs,
+                            domain_ids=inputs.get('domain_id') if 'domain_id' in inputs else None,
+                            data_collator=self.data_collator,
+                            dataset=self.train_dataset
                         )
 
-                        if hasattr(self, 'mixer') and self.mixer is not None:
-                            probs = self.mixer.mix(
-                                model=model,
-                                step_id=self.state.global_step,
-                                **extra_args
-                            )
-                        else:
-                            logger.warning(f"[Dataflex] No mixer available, cannot generate new proportions")
-                            continue
+                        probs = self.mixer.mix(
+                            model=model,
+                            step_id=self.state.global_step,
+                            **extra_args
+                        )
 
-                        if self.mixture_manager is not None:
-                            self.mixture_manager.set_proportions(probs)
-                            self.train_dataset = self.mixture_manager.rebuild(num_samples = total_train_batch_size * self.finetuning_args.update_step)
-                        else:
-                            logger.warning(f"[Dataflex] No mixture manager available, cannot update proportions")
+                        self.mixture_manager.set_proportions(probs)
+                        self.train_dataset = self.mixture_manager.rebuild(num_samples = total_train_batch_size * self.finetuning_args.update_step)
                         train_loader = self.get_train_dataloader()
                         current_iterator = iter(train_loader)
 
