@@ -14,7 +14,12 @@ class _MixedSnapshot(TorchDataset):
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         si, row = self.index_table[idx]
         name = self.names[si]
-        return self.sources[name][row]
+        item = self.sources[name][row]
+        # Add domain_id to track which domain this sample belongs to
+        # This is needed by DoReMi mixer to compute per-domain excess losses
+        if isinstance(item, dict):
+            item['domain_id'] = si
+        return item
 
 class MixedProportionManager:
     """
@@ -106,10 +111,40 @@ class MixedProportionManager:
             self.rng = np.random.default_rng(self._seed)
 
         sizes = np.array([self.sizes[n] for n in self.names], dtype=int)
-        
-        # 按比例计算每个数据源的数量
-        n_per = np.floor(num_samples * self.probs).astype(int)
-        n_per[-1] += num_samples - n_per.sum()  # 保证总数正好等于 num_samples
+
+        # Safety check: validate self.probs before using
+        probs = self.probs
+        if (not np.all(np.isfinite(probs))) or probs.sum() <= 0:
+            if self.logger:
+                self.logger.warning("[MixedProportionManager] probs invalid, reset to uniform")
+            probs = np.ones_like(probs, dtype=float) / len(probs)
+            self.probs = probs
+
+        # 按比例计算每个数据源的数量，使用更稳定的计算方式避免溢出
+        # 先计算每个比例对应的样本数，避免大数相乘
+        n_per = np.zeros(len(probs), dtype=np.int64)  # 使用 int64 避免溢出
+        remaining = num_samples
+
+        for i in range(len(probs) - 1):
+            # 计算当前域的样本数，取整
+            n_i = int(np.floor(num_samples * probs[i]))
+            # 确保不超过剩余样本数
+            n_i = min(n_i, remaining)
+            n_per[i] = n_i
+            remaining -= n_i
+
+        # 最后一个域得到剩余的所有样本
+        n_per[-1] = remaining
+
+        # Additional safety check: ensure no negative values
+        if (n_per < 0).any() or not np.all(np.isfinite(n_per)):
+            if self.logger:
+                self.logger.warning("[MixedProportionManager] n_per invalid, reset to uniform allocation")
+            n_per = np.full_like(n_per, num_samples // len(n_per), dtype=int)
+            n_per[-1] += num_samples - n_per.sum()
+
+        # 确保没有负数（理论上不应该发生，但作为安全检查）
+        n_per = np.maximum(n_per, 0)
 
         index_table: list[tuple[int, int]] = []
 

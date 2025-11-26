@@ -88,16 +88,11 @@ mixers:
       reference_model_path: /path/to/dataflex_saves/Qwen2.5-0.5B/doremi_step1_static_qwen_pt_full_result/checkpoint-xxx
       # # Set to null if no reference model available
       # reference_model_path: null
-      # # Use proxy model as reference (for cases where no separate reference model exists)
-      # use_proxy_as_reference: true
       # Learning rate for domain weight updates (eta in the paper)
-      reweight_eta: 1.0
+      reweight_eta: 0.1 
       # Smoothing parameter for domain weights (epsilon in the paper)
-      reweight_eps: 1e-3
-      # Number of samples to evaluate per domain
-      num_eval_samples: 1000
-      # Batch size for computing excess loss
-      eval_batch_size: 8
+      reweight_eps: 0.01
+
   
   # 静态数据混合器 - 用于DoReMi算法的Step 1和Step 3
   static:
