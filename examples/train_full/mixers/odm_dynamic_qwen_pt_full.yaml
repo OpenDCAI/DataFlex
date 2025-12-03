@@ -1,0 +1,91 @@
+### model
+# model_name_or_path: meta-llama/Llama-3.1-8B
+model_name_or_path: /path/to/ckpt/Qwen2.5-1.5B
+trust_remote_code: true
+
+### method
+# stage: sft
+stage: pt
+do_train: true
+train_from_scratch: true
+finetuning_type: full
+deepspeed: examples/deepspeed/ds_z3_config.json
+flash_attn: fa2
+#deepspeed: examples/deepspeed/ds_z3_config.json  # choices: [ds_z0_config.json, ds_z2_config.json, ds_z3_config.json]
+
+### dataset
+# dataset: alpaca_en_demo,alpaca_zh_demo
+# dataset: wiki_demo,c4_demo # for debugging
+dataset: wiki_demo,c4_demo
+# dataset: wikipedia_en,wikipedia_zh
+# dataset: wikipedia_en,wikipedia_zh,refinedweb,redpajama_v2
+# template: llama3
+template: qwen
+# cutoff_len: 4096
+cutoff_len: 2048
+# max_samples: 100000000
+overwrite_cache: true
+# tokenized_path: ../dataflex_saves/tokenized_datasets/slimepajama_6b_qwen_2048_odm
+preprocessing_num_workers: 128
+dataloader_num_workers: 0
+# disable_shuffling: true
+seed: 42
+
+### output
+# output_dir: ../dataflex_saves/Llama-3.1-8B/static_mixer_result
+output_dir: ../dataflex_saves/Qwen2.5-1.5B/odm_dynamic_qwen_pt_full_result
+logging_steps: 10
+save_steps: 5000
+plot_loss: true
+save_only_model: true
+overwrite_output_dir: true
+
+### swanlab
+report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
+# use_swanlab: true
+# swanlab_project: medical_dynamic_sft
+# swanlab_run_name: qwen2_5_3b_lora_medical_50k_baseline
+# swanlab_workspace: word2li
+# swanlab_api_key: AnLWTMijcbd4cyEfundi3
+# swanlab_lark_webhook_url: https://open.feishu.cn/open-apis/bot/v2/hook/ff10a391-4e51-4481-97ff-965760cae2a1
+# swanlab_lark_secret: cySzwTbCJh08349FGAhBSf
+
+### train
+per_device_train_batch_size: 8
+gradient_accumulation_steps: 1
+learning_rate: 5.0e-5
+num_train_epochs: 0.5
+lr_scheduler_type: linear
+warmup_ratio: 0.05
+bf16: true
+ddp_timeout: 180000000
+
+### dynamic_train - ODM: Online Data Mixing with Multi-Armed Bandits
+train_type: dynamic_mix
+components_cfg_file: src/dataflex/configs/components.yaml
+component_name: odm  # 使用ODM混合器 (Online Data Mixing with Exp3)
+mixture_sample_rule: mixture # 初始采样规则，mixture为根据init_mixture_proportions比例混合
+# 初始权重：可以使用 数据集默认配置，ODM会在warmup后动态调整这些权重
+# debug
+init_mixture_proportions: [0.5, 0.5] # 初始权重
+warmup_step: 10  # ODM warmup期：在此期间使用初始权重，之后开始动态调整
+update_step: 10  # ODM在每个step都会更新权重（基于累积的loss）
+update_times: -1  # -1表示持续更新直到训练结束（根据num_train_epochs计算总步数）
+train_step: 1000  # 可选：显式指定总训练步数（优先级高于num_train_epochs）
+
+# eval_dataset: mmlu_eval # TODO: Undefined dataset mmlu_eval in dataset_info.json.
+# eval_dataset: alpaca_zh_demo  # SFT format, not suitable for PT
+eval_dataset: c4_demo  # Use PT-compatible dataset for evaluation
+
+
+## eval
+# val_size: 0.001
+# per_device_eval_batch_size: 1
+# eval_strategy: steps
+# eval_steps: 1000
+
+# Cannot specify `val_size` if `eval_dataset` is not None
+# val_size: 0.1  # Use 10% of data for validation
+# per_device_eval_batch_size: 1
+# eval_strategy: steps
+# eval_steps: 100

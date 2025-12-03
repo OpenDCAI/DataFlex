@@ -102,6 +102,33 @@ mixers:
       proportions: [0.5, 0.5]  # 对应各个域的比例
       # proportions: null  # 使用均匀分布
       # proportions: [0.541, 0.287, 0.042, 0.037, 0.034, 0.031, 0.028] # For SlimePajama-6B dataset
+  odm:
+    name: odm
+    params:
+      # Online Data Mixing (ODM) uses Multi-Armed Bandits (Exp3) for dynamic mixing
+      # Based on: https://arxiv.org/abs/2312.02406
+      # Official code: https://github.com/alon-albalak/online-data-mixing
+      
+      # Alpha (smoothing_factor): smoothing parameter for exponential moving average (0 to 1)
+      # Higher alpha = more weight on historical rewards, more stable but slower to adapt
+      # Lower alpha = more responsive to recent rewards, faster adaptation but more volatile
+      # Official default: 0.9
+      alpha: 0.9
+      
+      # Warmup steps: number of steps to use initial proportions before starting ODM
+      # Typically 1% of total training steps
+      warmup_steps: 2000
+      # warmup_steps: 10 # debug
+      # Number of samples to evaluate per domain when computing rewards
+      num_eval_samples: 500
+      # num_eval_samples: 10 # debug
+      # Batch size for evaluation
+      eval_batch_size: 8
+      # Initial proportions for warmup period and ODM initialization
+      # If not specified, uses uniform distribution
+      initial_proportions: [0.541, 0.287, 0.042, 0.037, 0.034, 0.031, 0.028] # for odm on SlimePajam-6B dataset
+      # initial_proportions: [0.5, 0.5] # debug
+      # initial_proportions: null  # Use uniform distribution if null
 
 weighters:
   # 动态数据加权器
