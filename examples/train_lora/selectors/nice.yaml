@@ -62,10 +62,14 @@ warmup_step: 10
 update_step: 10
 update_times: 2
 
-eval_dataset: alpaca_zh_demo
-
 ## eval
 # val_size: 0.001
-# per_device_eval_batch_size: 1
-# eval_strategy: steps
-# eval_steps: 1000
+eval_dataset: alpaca_zh_demo
+per_device_eval_batch_size: 1
+metric_for_best_model: eval_loss
+greater_is_better: false
+load_best_model_at_end: true
+eval_strategy: steps    # choices: [no, steps, epoch]
+eval_steps: 10
+early_stopping_steps: 3
+early_stopping_min_delta: 0.01

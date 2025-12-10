@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal, Optional
 
@@ -505,6 +506,10 @@ class DynamicFinetuningArguments(
         default=None,
         metadata={"help": "Number of steps to stop training if the `metric_for_best_model` does not improve."},
     )
+    early_stopping_min_delta: float = field(
+        default=0.0,
+        metadata={"help": "Minimum improvement (abs) on the monitored metric to reset early stopping patience."},
+    )
     plot_loss: bool = field(
         default=False,
         metadata={"help": "Whether or not to save the training loss curves."},
@@ -597,6 +602,9 @@ class DynamicFinetuningArguments(
         if self.pissa_init and (self.stage in ["ppo", "kto"] or self.use_ref_model):
             raise ValueError("Cannot use PiSSA for current training stage.")
 
+        if self.early_stopping_min_delta < 0:
+            raise ValueError("`early_stopping_min_delta` must be non-negative.")
+
         if self.finetuning_type != "lora":
             if self.loraplus_lr_ratio is not None:
                 raise ValueError("`loraplus_lr_ratio` is only valid for LoRA training.")
@@ -610,7 +618,28 @@ class DynamicFinetuningArguments(
             if self.pissa_init:
                 raise ValueError("`pissa_init` is only valid for LoRA training.")
 
+        if self.early_stopping_steps is not None:
+            _patch_early_stopping_callback(self.early_stopping_min_delta)
+
     def to_dict(self) -> dict[str, Any]:
         args = asdict(self)
         args = {k: f"<{k.upper()}>" if k.endswith("api_key") else v for k, v in args.items()}
         return args
+
+
+def _patch_early_stopping_callback(min_delta: float) -> None:
+    from transformers import EarlyStoppingCallback as HFEarlyStoppingCallback
+
+    try:
+        tuner = importlib.import_module("llamafactory.train.tuner")
+    except ModuleNotFoundError:
+        return
+
+    class DataFlexEarlyStoppingCallback(HFEarlyStoppingCallback):
+        def __init__(self, early_stopping_patience: int):
+            super().__init__(
+                early_stopping_patience=early_stopping_patience,
+                early_stopping_threshold=min_delta,
+            )
+
+    tuner.EarlyStoppingCallback = DataFlexEarlyStoppingCallback
