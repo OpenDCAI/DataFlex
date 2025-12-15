@@ -266,6 +266,7 @@ class NICESelector(Selector):
                  reward_backend_params: Optional[Dict[str, Any]] = None,
                  gradient_type: str = "adam",
                  proj_dim: int = 8192,
+                 save_interval: int = 16,
                  seed: int = 42,
                  mc_samples: int = 4,
                  max_new_tokens: int = 512,
@@ -280,6 +281,7 @@ class NICESelector(Selector):
         self.eval_dataset = eval_dataset
         self.gradient_type = gradient_type
         self.proj_dim = proj_dim
+        self.save_interval = save_interval
         self.seed = seed
         self.mc_samples = mc_samples
         self.max_new_tokens = max_new_tokens
@@ -679,7 +681,7 @@ class NICESelector(Selector):
         dataloader = self.accelerator.prepare(dataloader)
 
         # 4) 设置保存间隔
-        save_interval = 64
+        save_interval = self.save_interval
 
         # 5) 断点续传
         max_index = self._get_max_saved_index(save_dir=save_dir)
