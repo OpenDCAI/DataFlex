@@ -8,6 +8,7 @@ selectors:
       gradient_type: adam
       proj_dim: 4096
       seed: 123
+      save_interval: 16
       reward_model_backend: local_vllm   # choices: [local_vllm, api]
       reward_backend_params:
         local_vllm:
@@ -37,6 +38,7 @@ selectors:
       gradient_type: adam
       proj_dim: 4096
       seed: 123
+      save_interval: 16
 
   loss:
     name: loss
