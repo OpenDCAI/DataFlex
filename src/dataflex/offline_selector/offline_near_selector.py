@@ -42,13 +42,15 @@ class offline_near_Selector:
                  candidate_path = None,
                  query_path: str =  None,
                  embed_model: str = "Qwen/Qwen3-Embedding-0.6B",
+                 embed_method: str ="auto",
                  batch_size: int = 32,
                  save_indices_path: str = "top_indices.npy",
                  max_K: int = 1000):
-        
+    
         self.candidate_path = candidate_path
         self.query_path = query_path
         self.embed_model = embed_model
+        self.embed_method = embed_method
         self.batch_size = batch_size
         self.save_indices_path = save_indices_path
         self.max_K = max_K
@@ -71,14 +73,14 @@ class offline_near_Selector:
     # ---------- Embedding 方法 ----------
     def _embed_texts(self, texts):
         '''
-        自动尝试 embedding 后端：
+        auto模式自动尝试 embedding 后端：
         1) 优先 vLLM
         2) 否则 sentence-transformers
         3) 都不可用则报错
         '''
 
         # -------- 1. 优先 vLLM --------
-        if VLLM_AVAILABLE:
+        if (VLLM_AVAILABLE and self.embed_method == "auto") or self.embed_method == "vllm":
             try:
                 logger.info(f"[EMBED] Using vLLM model: {self.embed_model}")
                 llm = LLM(model=self.embed_model, trust_remote_code=True, task="embed")
@@ -95,10 +97,10 @@ class offline_near_Selector:
                 return np.ascontiguousarray(embs)
 
             except Exception as e:
-                logger.warning(f"[EMBED] vLLM failed, fallback to SentenceTransformer: {e}")
+                logger.warning(f"[EMBED] vLLM available but embedding failed {e}")
 
         # -------- 2. fallback: sentence-transformers --------
-        if ST_AVAILABLE:
+        if (ST_AVAILABLE and self.embed_method == "auto") or self.embed_method == "sentence-transformer":
             try:
                 logger.info(f"[EMBED] Using SentenceTransformer: {self.embed_model}")
                 model = SentenceTransformer(self.embed_model)
@@ -180,6 +182,11 @@ if __name__ == "__main__":
         query_path="OpenDCAI/DataFlex-selector-openhermes-10w", # split = vaildation
         # It automatically try vllm first, then sentence-transformers
         embed_model="Qwen/Qwen3-Embedding-0.6B",
+        # support method:
+        #auto(It automatically try vllm first, then sentence-transformers),
+        #vllm,
+        #sentence-transformer
+        embed_method= "auto",
         batch_size=32,
         save_indices_path="top_indices.npy",
         max_K=1000,
