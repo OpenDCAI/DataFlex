@@ -3,12 +3,18 @@ import json
 import numpy as np
 import faiss
 import heapq
+# ===== auto optional embedding backends =====
 try:
     from vllm import LLM, SamplingParams
     VLLM_AVAILABLE = True
-except ImportError:
+except Exception:
     VLLM_AVAILABLE = False
-from sentence_transformers import SentenceTransformer
+
+try:
+    from sentence_transformers import SentenceTransformer
+    ST_AVAILABLE = True
+except Exception:
+    ST_AVAILABLE = False
 from dataflex.utils.logging import logger
 
 # ========== FAISS IVFFlat 索引封装类 ==========
@@ -36,6 +42,7 @@ class offline_tsds_Selector:
                  candidate_path = None,
                  query_path: str = None,
                  embed_model: str = "Qwen/Qwen3-Embedding-0.6B",
+                 embed_method: str ="auto",
                  batch_size: int = 32,
                  save_probs_path: str = "tsds_probs.npy",
                  max_K: int = 5000,
@@ -47,6 +54,7 @@ class offline_tsds_Selector:
         self.candidate_path = candidate_path
         self.query_path = query_path
         self.embed_model = embed_model
+        self.embed_method = embed_method
         self.batch_size = batch_size
         self.save_probs_path = save_probs_path
         self.max_K = max_K
@@ -72,28 +80,62 @@ class offline_tsds_Selector:
 
     # ---------- Embedding 方法 ----------
     def _embed_texts(self, texts):
-        if VLLM_AVAILABLE and self.embed_model.startswith("vllm:"):
-            model_name = self.embed_model.replace("vllm:", "")
-            logger.info(f"[EMBED] vLLM model: {model_name}")
-            llm = LLM(model=model_name, trust_remote_code=True, task="embed")
-            
-            # 使用 vLLM 的 embed 接口
-            outputs = llm.embed(texts)  # 返回 [N, D]
-            print(f"Embeddings shape: {np.array(outputs).shape}", outputs[0])
-            embs = [o.outputs.embedding for o in outputs]
-            embs = np.array(embs, dtype=np.float32)
-        else:
-            logger.info(f"[EMBED] SentenceTransformer: {self.embed_model}")
-            model = SentenceTransformer(self.embed_model)
-            embs = model.encode(texts,
-                                batch_size=self.batch_size,
-                                show_progress_bar=True).astype(np.float32)
-        norms = np.linalg.norm(embs, axis=1, keepdims=True)  # [N, 1]
-        # 防止除以 0
-        norms = np.maximum(norms, 1e-12)
-        embs = embs / norms
-        # --------------------------------------    
-        return np.ascontiguousarray(embs)
+        '''
+        auto模式自动尝试 embedding 后端：
+        1) 优先 vLLM
+        2) 否则 sentence-transformers
+        3) 都不可用则报错
+        '''
+
+        # -------- 1. 优先 vLLM --------
+        if (VLLM_AVAILABLE and self.embed_method == "auto") or self.embed_method == "vllm":
+            try:
+                logger.info(f"[EMBED] Using vLLM model: {self.embed_model}")
+                llm = LLM(model=self.embed_model, trust_remote_code=True, task="embed")
+
+                outputs = llm.embed(texts)  # [N, D]
+                embs = [o.outputs.embedding for o in outputs]
+                embs = np.array(embs, dtype=np.float32)
+
+                # normalize
+                norms = np.linalg.norm(embs, axis=1, keepdims=True)
+                norms = np.maximum(norms, 1e-12)
+                embs = embs / norms
+
+                return np.ascontiguousarray(embs)
+
+            except Exception as e:
+                logger.warning(f"[EMBED] vLLM available but embedding failed {e}")
+
+        # -------- 2. fallback: sentence-transformers --------
+        if (ST_AVAILABLE and self.embed_method == "auto") or self.embed_method == "sentence-transformer":
+            try:
+                logger.info(f"[EMBED] Using SentenceTransformer: {self.embed_model}")
+                model = SentenceTransformer(self.embed_model)
+                embs = model.encode(
+                    texts,
+                    batch_size=self.batch_size,
+                    show_progress_bar=True
+                ).astype(np.float32)
+
+                norms = np.linalg.norm(embs, axis=1, keepdims=True)
+                norms = np.maximum(norms, 1e-12)
+                embs = embs / norms
+
+                return np.ascontiguousarray(embs)
+
+            except Exception as e:
+                raise RuntimeError(
+                    f"SentenceTransformer available but embedding failed: {e}"
+                )
+
+        # -------- 3. 两个都不可用 --------
+        raise RuntimeError(
+            "No available embedding backend!\n"
+            "Please install at least one of the following:\n"
+            "  - vLLM: pip install vllm\n"
+            "  - sentence-transformers: pip install sentence-transformers"
+        )
 
     # ---------- TSDS 调用接口 ----------
     def candidate_sentence_embedding(self):
@@ -192,10 +234,12 @@ if __name__ == "__main__":
     tsds = offline_tsds_Selector(
         candidate_path="OpenDCAI/DataFlex-selector-openhermes-10w",
         query_path="OpenDCAI/DataFlex-selector-openhermes-10w",
-
-        # If you want to use vllm,please add "vllm:" before model's name
-        # Otherwise it automatically use sentence-transfromer
-        embed_model="vllm:Qwen/Qwen3-Embedding-0.6B",
+        embed_model="Qwen/Qwen3-Embedding-0.6B",
+        # support method:
+        #auto(It automatically try vllm first, then sentence-transformers),
+        #vllm,
+        #sentence-transformer
+        embed_method="auto",
         batch_size=32,
         save_probs_path="tsds_probs.npy",
         max_K=5000,
