@@ -72,7 +72,7 @@ Our gratitude extends to all contributors in the open-source community—their e
 We welcome contributions of new trainers and selectors!
 Please ensure code formatting is consistent with the existing style before submitting a PR.
 
-We also welcome you to join the DataFlex and [Dataflow](https://github.com/OpenDCAI/DataFlow) open-source community to ask questions, share ideas, and collaborate with other developers!
+We also welcome you to join the [DataFlex](https://github.com/OpenDCAI/DataFlex) and [Dataflow](https://github.com/OpenDCAI/DataFlow) open-source community to ask questions, share ideas, and collaborate with other developers!
 
 •	📮 [GitHub Issues](../../issues): Report bugs or suggest features
  
