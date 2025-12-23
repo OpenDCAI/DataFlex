@@ -72,7 +72,7 @@ FORCE_TORCHRUN=1 DISABLE_VERSION_CHECK=1 dataflex-cli train examples/train_lora/
 我们欢迎贡献新的 trainers 和 selectors！
 在提交 PR 之前，请确保代码风格与现有代码保持一致。
 
-我们也欢迎你加入 DataFlex 与 [Dataflow](https://github.com/OpenDCAI/DataFlow) 开源社区，提出问题、分享想法，并与其他开发者协作！
+我们也欢迎你加入 [DataFlex](https://github.com/OpenDCAI/DataFlex) 与 [Dataflow](https://github.com/OpenDCAI/DataFlow) 开源社区，提出问题、分享想法，并与其他开发者协作！
 
 •	📮 [GitHub Issues](../../issues)：报告 Bug 或提出新功能建议
 
