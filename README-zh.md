@@ -2,7 +2,6 @@
 # DataFlex
 
 <div align="center">
-<img src="https://github.com/user-attachments/assets/935c2537-8cde-44ae-a8e1-c6ec30695810">
 
 [![Documents](https://img.shields.io/badge/官方文档-单击此处-brightgreen?logo=read-the-docs)](https://OpenDCAI.github.io/DataFlex-Doc/)
 [![](https://img.shields.io/github/license/OpenDCAI/DataFlex)](https://github.com/OpenDCAI/DataFlex/blob/main/LICENSE)
@@ -19,25 +18,27 @@
 
 </div>
 
-# DataFlex
+## 📰 1. 新闻
 
-**DataFlex** 是一个基于 [LlamaFactory](https://github.com/hiyouga/LLaMA-Factory) 构建的高级动态训练框架。
-它能够在训练过程中智能调度数据，支持 **动态样本选择**、**领域比例调整** 和 **动态加权**，旨在同时提升训练效率和最终模型表现。
+* [2025-12-23] 🎉 我们很高兴地宣布首个 **数据中心训练系统 DataFlex** 正式发布！敬请期待后续更新。
 
-DataFlex 可与 LlamaFactory 无缝集成，为研究人员和开发者提供更灵活、更强大的训练控制能力。
+## 🔍 2. 概述
 
----
+<img src="https://github.com/user-attachments/assets/935c2537-8cde-44ae-a8e1-c6ec30695810">
 
-## ✨ 功能特性
+**DataFlex** 是一个构建在 [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) 之上的高级动态训练框架。
+它能够在训练过程中智能地调度数据，支持 **动态样本选择**、**领域比例调整** 以及 **动态加权**，旨在同时提升训练效率与最终模型性能。
 
-* **Dynamic Select Trainer**：根据给定策略动态选择训练样本（例如，聚焦“困难”样本）。
-* **Dynamic Mix Trainer**：在训练过程中动态调整不同领域数据的比例。
-* **Dynamic Weight Trainer**：在反向传播时动态调整样本权重，以强化模型更偏好的数据。
-* **与 LlamaFactory 完全兼容**，可直接替换使用。
+DataFlex 与 LlamaFactory 无缝集成，为研究人员和开发者提供更灵活、更强大的训练控制能力。关于目标与设计理念，请参考 [Dataflex-Doc](https://opendcai.github.io/DataFlex-Doc/)。
 
----
+* **动态选择 Trainer**：根据给定策略动态选择训练样本（例如聚焦“困难”样本）。
+* **动态混合 Trainer**：在训练过程中动态调整来自不同领域的数据比例。
+* **动态加权 Trainer**：在反向传播过程中动态调整样本权重，以强调模型更偏好的数据。
+* **与 LlamaFactory 完全兼容**，可作为即插即用的替代方案。
 
-## 🚀 安装方式
+## 📌 3. 快速开始
+
+请使用以下命令进行环境配置与安装👇
 
 ```bash
 git clone https://github.com/OpenDCAI/DataFlex.git
@@ -46,53 +47,39 @@ pip install -e .
 pip install llamafactory==0.9.3
 ```
 
----
-
-## 📌 使用示例
-
 启动命令与 [LlamaFactory](https://github.com/hiyouga/LLaMA-Factory) 类似。
-以下是使用 [LESS](https://arxiv.org/abs/2402.04333) 的示例：
+下面给出一个使用 [LESS](https://arxiv.org/abs/2402.04333) 的示例：
 
 ```bash
-FORCE_TORCHRUN=1 DISABLE_VERSION_CHECK=1 dataflex-cli train examples/train_lora/less.yaml
+FORCE_TORCHRUN=1 DISABLE_VERSION_CHECK=1 dataflex-cli train examples/train_lora/selectors/less.yaml
 ```
 
-与原版 LlamaFactory 不同的是，你的 `.yaml` 配置文件必须包含 **DataFlex 特有参数**。
+与原生 LlamaFactory 不同的是，你的 `.yaml` 配置文件中还必须包含 **DataFlex 特有的参数**，具体请参考 [Dataflex-Doc](https://opendcai.github.io/DataFlex-Doc/)。
 
----
-
-## 🔑 Select Trainer 配置示例
-
-```yaml
-# Select Trainer 参数
-train_type: dynamic_select    # [dynamic_select, dynamic_mix, dynamic_weighting, static_full]
-component_name: loss          # 选择策略，例如 loss / less
-components_cfg_file: src/dataflex/configs/components.yaml
-warmup_step: 200              # 在第一次选择前的预热步数
-update_step: 1000             # 每隔 N 步触发一次选择
-update_times: 2               # 选择操作的执行次数
-```
-
-**参数说明**：
-
-* `train_type`：训练模式（dynamic select / dynamic mix / dynamic weighting / static_full）。
-* `component_name`：选择器策略（例如 loss 或 less）。
-* `components_cfg_file`：选择器配置文件路径。
-* `warmup_step`：在第一次选择前的预热步数。
-* `update_step`：选择器的触发频率。
-* `update_times`：选择器执行的总次数。
-
----
-
-## 📚 核心概念
+## 📚 4. 实验结果
 
 * **Trainer**：定义训练流程（选择、混合、加权）。
 * **Selector**：封装样本选择策略。
-* **Components**：配置文件中的模块化参数定义。
+* **Components**：在配置文件中以模块化方式定义参数。
 
----
+## 🤝 5. 致谢
 
-## 🤝 贡献指南
+我们感谢 [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) 提供了高效且易用的大模型微调框架，极大地促进了我们在训练与实验中的快速迭代。
+同时也感谢所有开源社区的贡献者——正是你们的努力共同推动了 DataFlex 的发展。
 
-欢迎贡献新的 Trainer 和 Selector！
-在提交 PR 之前，请确保代码格式与现有风格保持一致。
+## 🤝 6. 社区与支持
+
+我们欢迎贡献新的 trainers 和 selectors！
+在提交 PR 之前，请确保代码风格与现有代码保持一致。
+
+我们也欢迎你加入 DataFlex 与 [Dataflow](https://github.com/OpenDCAI/DataFlow) 开源社区，提出问题、分享想法，并与其他开发者协作！
+
+•	📮 [GitHub Issues](../../issues)：报告 Bug 或提出新功能建议
+
+•	🔧 [GitHub Pull Requests](../../pulls)：贡献代码改进
+
+•	💬 加入我们的社区群组，与我们及其他贡献者交流！
+
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/c04cc04c-f1f4-49b0-9758-56d9d8d37c4a" width="60%">
+</div>
