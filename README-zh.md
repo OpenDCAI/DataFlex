@@ -57,10 +57,23 @@ FORCE_TORCHRUN=1 DISABLE_VERSION_CHECK=1 dataflex-cli train examples/train_lora/
 与原生 LlamaFactory 不同的是，你的 `.yaml` 配置文件中还必须包含 **DataFlex 特有的参数**，具体请参考 [Dataflex-Doc](https://opendcai.github.io/DataFlex-Doc/)。
 
 ## 📚 4. 实验结果
+### Data Selector Results
+我们的算法能够超过random selector算法。
+<div align="center">
 
-* **Trainer**：定义训练流程（选择、混合、加权）。
-* **Selector**：封装样本选择策略。
-* **Components**：在配置文件中以模块化方式定义参数。
+  <div style="display: inline-block; width: 49%; text-align: center;">
+    <img src="https://github.com/user-attachments/assets/afa8f232-a338-48e4-8bb2-47a79dde008b"
+         alt="ICML 2025 Certificate" width="95%"><br>
+    <sub><em>LLaMA3.2-3B Results</em></sub>
+  </div>
+
+  <div style="display: inline-block; width: 49%; text-align: center;">
+    <img src="https://github.com/user-attachments/assets/c4e382f5-10ca-4cce-9f31-467b23032916"
+         alt="LIC 2025 Certificate" width="95%"><br>
+    <sub><em>Mistral-7B Results</em></sub>
+  </div>
+
+</div>
 
 ## 🤝 5. 致谢
 
