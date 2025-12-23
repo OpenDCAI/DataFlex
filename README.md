@@ -61,21 +61,10 @@ Unlike vanilla LlamaFactory, your `.yaml` config file must also include **DataFl
 
 ### Data Selector Results
 Our algorithm outperforms the random selector.
-<div align="center">
 
-  <div style="display: inline-block; width: 49%; text-align: center;">
-    <img src="https://github.com/user-attachments/assets/afa8f232-a338-48e4-8bb2-47a79dde008b"
-         alt="ICML 2025 Certificate" width="95%"><br>
-    <sub><em>LLaMA3.2-3B Results</em></sub>
-  </div>
+<img src="https://github.com/user-attachments/assets/afa8f232-a338-48e4-8bb2-47a79dde008b" width="80%">
 
-  <div style="display: inline-block; width: 49%; text-align: center;">
-    <img src="https://github.com/user-attachments/assets/c4e382f5-10ca-4cce-9f31-467b23032916"
-         alt="LIC 2025 Certificate" width="95%"><br>
-    <sub><em>Mistral-7B Results</em></sub>
-  </div>
-
-</div>
+<img src="https://github.com/user-attachments/assets/c4e382f5-10ca-4cce-9f31-467b23032916" width="80%">
 
 ## 🤝 5. Acknowledgements
 We thank [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) for offering an efficient and user-friendly framework for large model fine-tuning, which greatly facilitated rapid iteration in our training and experimentation workflows.  
