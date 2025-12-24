@@ -119,9 +119,9 @@ class LossWeighter(Weighter):
             max_loss = gathered.max().item()
 
             normalized = self.normalize_losses(
-                gathered.view(-1), delta=1.0, l_min=min_loss, l_max=max_loss
+                gathered.view(-1), delta=self.delta, l_min=min_loss, l_max=max_loss
             )
-            reweighted = self.apply_strategy(normalized, delta=1.0, strategy=self.strategy)
+            reweighted = self.apply_strategy(normalized, delta=self.delta, strategy=self.strategy)
 
             centered = reweighted - float(reweighted.max().item())  # 数值稳定
             scaled = self.scale_losses(centered, r=r)
