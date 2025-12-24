@@ -60,7 +60,7 @@ Unlike vanilla LlamaFactory, your `.yaml` config file must also include **DataFl
 ## 📚 4. Experimental Results
 
 ### Data Selector Results
-The data selection algorithm outperforms the random selector.
+The data selection algorithm outperforms the random selector baseline on the MMLU benchmark.
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/afa8f232-a338-48e4-8bb2-47a79dde008b" width="49%">
@@ -68,10 +68,14 @@ The data selection algorithm outperforms the random selector.
 </p>
 
 ### Data Mixture Results
-The data mixture algorithm also outperforms baselines.
+The data mixture algorithm also outperforms baselines on the MMLU benchmark.
+<div align="center">
+
 | Dataset | Baseline | DoReMi | ODM |
-|---------|----------|--------|-----|
-| ALL     | 25.27    | 25.84  | 26.04 |
+|:------:|:--------:|:------:|:---:|
+|  ALL   |  25.27   | 25.84  | 26.04 |
+
+</div>
 
 
 ## 🤝 5. Acknowledgements
