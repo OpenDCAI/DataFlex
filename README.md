@@ -24,7 +24,7 @@
 
 
 ## 🔍 2. Overview
-<img src="https://github.com/user-attachments/assets/935c2537-8cde-44ae-a8e1-c6ec30695810">
+<img src="https://github.com/user-attachments/assets/093bfc8e-f450-4048-ad22-456edfdc00d9">
 
 **DataFlex** is an advanced dynamic training framework built on top of [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory).  
 It intelligently schedules data during training, supporting **dynamic sample selection**, **domain ratio adjustment**, and **dynamic weighting**, aiming to improve both training efficiency and final model performance.  
@@ -60,12 +60,19 @@ Unlike vanilla LlamaFactory, your `.yaml` config file must also include **DataFl
 ## 📚 4. Experimental Results
 
 ### Data Selector Results
-Our algorithm outperforms the random selector.
+The data selection algorithm outperforms the random selector.
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/afa8f232-a338-48e4-8bb2-47a79dde008b" width="49%">
   <img src="https://github.com/user-attachments/assets/c4e382f5-10ca-4cce-9f31-467b23032916" width="49%">
 </p>
+
+### Data Mixture Results
+The data mixture algorithm also outperforms baselines.
+| Dataset | Baseline | DoReMi | ODM |
+|---------|----------|--------|-----|
+| ALL     | 25.27    | 25.84  | 26.04 |
+
 
 ## 🤝 5. Acknowledgements
 We thank [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) for offering an efficient and user-friendly framework for large model fine-tuning, which greatly facilitated rapid iteration in our training and experimentation workflows.  
