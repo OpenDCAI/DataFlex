@@ -24,7 +24,7 @@
 
 ## 🔍 2. 概述
 
-<img src="https://github.com/user-attachments/assets/935c2537-8cde-44ae-a8e1-c6ec30695810">
+<img src="https://github.com/user-attachments/assets/1fdb62e4-1143-4866-afd2-c1067ad25ae8">
 
 **DataFlex** 是一个构建在 [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) 之上的高级动态训练框架。
 它能够在训练过程中智能地调度数据，支持 **动态样本选择**、**领域比例调整** 以及 **动态加权**，旨在同时提升训练效率与最终模型性能。
@@ -57,12 +57,23 @@ FORCE_TORCHRUN=1 DISABLE_VERSION_CHECK=1 dataflex-cli train examples/train_lora/
 与原生 LlamaFactory 不同的是，你的 `.yaml` 配置文件中还必须包含 **DataFlex 特有的参数**，具体请参考 [Dataflex-Doc](https://opendcai.github.io/DataFlex-Doc/)。
 
 ## 📚 4. 实验结果
-### Data Selector Results
-我们的算法能够超过random selector算法。
+### 数据选择实验结果
+数据选择算法能够在MMLU数据集上超过random selector算法。
 <p align="center">
   <img src="https://github.com/user-attachments/assets/afa8f232-a338-48e4-8bb2-47a79dde008b" width="49%">
   <img src="https://github.com/user-attachments/assets/c4e382f5-10ca-4cce-9f31-467b23032916" width="49%">
 </p>
+
+### 数据配比实验结果
+数据配比算法能够在MMLU数据集上超过baseline方法。
+<div align="center">
+
+| Dataset | Baseline | DoReMi | ODM |
+|:------:|:--------:|:------:|:---:|
+|  ALL   |  25.27   | 25.84  | 26.04 |
+
+</div>
+
 
 ## 🤝 5. 致谢
 
