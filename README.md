@@ -63,7 +63,7 @@ Unlike vanilla LlamaFactory, your `.yaml` config file must also include **DataFl
 ## 📚 4. Experimental Results
 
 ### Data Selector & Reweightor Results
-The data selection algorithm outperforms the random selector baseline on the MMLU benchmark.
+The data selection algorithms and data mixture algorithm outperform the random selector baseline on the MMLU benchmark. For the Less and Nice algorithm, we set the validation set to MMLU-Validation-Set, using a GPT-5-generated trajectory.
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/7c00d51b-e0eb-41c0-970f-0c8ab5112fa0" width="49%">
@@ -71,12 +71,12 @@ The data selection algorithm outperforms the random selector baseline on the MML
 </p>
 
 ### Data Mixture Results
-The data mixture algorithm also outperforms baselines on the MMLU benchmark.
+The data mixture algorithm also outperforms baselines (default data mixture) on the MMLU benchmark.
 <div align="center">
 
 | Dataset | Baseline | DoReMi | ODM |
 |:------:|:--------:|:------:|:---:|
-|  ALL   |  25.27   | 25.84  | 26.04 |
+|  MMLU   |  25.27   | 25.84  | 26.04 |
 
 </div>
 
