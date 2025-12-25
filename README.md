@@ -61,6 +61,7 @@ Unlike vanilla LlamaFactory, your `.yaml` config file must also include **DataFl
 
 
 ## 📚 4. Experimental Results
+Using DataFlex can improve performance over the default LLaMA-Factory training.
 
 ### Data Selector & Reweightor Results
 The data selection algorithms and data mixture algorithm outperform the random selector baseline on the MMLU benchmark. For the Less and Nice algorithm, we set the validation set to MMLU-Validation-Set, using a GPT-5-generated trajectory.
