@@ -34,9 +34,44 @@ It intelligently schedules data during training, supporting **dynamic sample sel
 
 DataFlex integrates seamlessly with LlamaFactory, offering researchers and developers more flexible and powerful training control, for goals and design philosophy, please refer to [Dataflex-Doc](https://opendcai.github.io/DataFlex-Doc/).
 
-- **Dynamic Select Trainer**: Dynamically selects training samples according to a given strategy (e.g., focus on “hard” samples).  
-- **Dynamic Mix Trainer**: Dynamically adjusts the ratio of data from different domains during training.  
-- **Dynamic Weight Trainer**: Dynamically adjusts sample weights during backpropagation to emphasize data preferred by the model.  
+- **Dynamic Select Trainer**: Dynamically selects training samples according to a given strategy (e.g., focus on “hard” samples). The data selection algorithms are summarized as follows:
+
+<div align="center">
+  
+| Method | Category | Requires Model-in-the-Loop? |
+|:------:|:--------:|:---------------------------:|
+| **LESS** | Gradient-Based | ✅ Yes |
+| **NICE** | Gradient-Based | ✅ Yes |
+| **Loss** | Loss-Based | ✅ Yes |
+| **Delta Loss** | Loss-Based | ✅ Yes |
+| **NEAR** | Data Distribution-Based | ❌ No |
+| **TSDS** | Data Distribution-Based | ❌ No |
+| **Static** | No Selection | ❌ No |
+| **Random** | Random Sampling | ❌ No |
+
+</div>
+
+- **Dynamic Mix Trainer**: Dynamically adjusts the ratio of data from different domains during training. The data mixture algorithms are summarized as follows:
+
+<div align="center">
+  
+| Method | Category | Requires Model-in-the-Loop? |
+|:------:|:--------:|:---------------------------:|
+| **DOREMI** | Offline Mixture | ✅ Yes |
+| **ODM** | Online Mixture | ✅ Yes |
+
+</div>
+
+- **Dynamic Weight Trainer**: Dynamically adjusts sample weights during backpropagation to emphasize data preferred by the model. The data reweighting algorithms are summarized as follows:
+
+<div align="center">
+  
+| Method | Category | Requires Model-in-the-Loop? |
+|:------:|:--------:|:---------------------------:|
+| **Loss Reweighting** | Loss-Based | ✅ Yes |
+
+</div>
+
 - **Full compatibility with LlamaFactory**, drop-in replacement.  
 
 ## 📌 3. Quick Start
