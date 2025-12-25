@@ -85,14 +85,14 @@ pip install -e .
 pip install llamafactory==0.9.3
 ```
 
-The launch command is similar to [LlamaFactory](https://github.com/hiyouga/LLaMA-Factory).
+The launch command is similar to [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory).
 Below is an example using [LESS](https://arxiv.org/abs/2402.04333) :
 
 ```bash
 FORCE_TORCHRUN=1 DISABLE_VERSION_CHECK=1 dataflex-cli train examples/train_lora/selectors/less.yaml
 ```
 
-Unlike vanilla LlamaFactory, your `.yaml` config file must also include **DataFlex-specific parameters**, for details please refer to [Dataflex-Doc](https://opendcai.github.io/DataFlex-Doc/).
+Unlike vanilla LlamaFactory, your `.yaml` config file must also include **DataFlex-specific parameters**, for details please refer to [DataFlex-Doc](https://opendcai.github.io/DataFlex-Doc/).
 
 
 ## 📚 4. Experimental Results
@@ -126,7 +126,7 @@ Our gratitude extends to all contributors in the open-source community—their e
 We welcome contributions of new trainers and selectors!
 Please ensure code formatting is consistent with the existing style before submitting a PR.
 
-We also welcome you to join the [DataFlex](https://github.com/OpenDCAI/DataFlex) and [Dataflow](https://github.com/OpenDCAI/DataFlow) open-source community to ask questions, share ideas, and collaborate with other developers!
+We also welcome you to join the [DataFlex](https://github.com/OpenDCAI/DataFlex) and [DataFlow](https://github.com/OpenDCAI/DataFlow) open-source community to ask questions, share ideas, and collaborate with other developers!
 
 •	📮 [GitHub Issues](../../issues): Report bugs or suggest features
  
