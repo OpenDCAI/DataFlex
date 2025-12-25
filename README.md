@@ -59,12 +59,12 @@ Unlike vanilla LlamaFactory, your `.yaml` config file must also include **DataFl
 
 ## 📚 4. Experimental Results
 
-### Data Selector Results
+### Data Selector & Reweightor Results
 The data selection algorithm outperforms the random selector baseline on the MMLU benchmark.
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/afa8f232-a338-48e4-8bb2-47a79dde008b" width="49%">
-  <img src="https://github.com/user-attachments/assets/c4e382f5-10ca-4cce-9f31-467b23032916" width="49%">
+  <img src="https://github.com/user-attachments/assets/7c00d51b-e0eb-41c0-970f-0c8ab5112fa0" width="49%">
+  <img src="https://github.com/user-attachments/assets/589d1c58-ee91-49c4-b4fd-670aee8e0945" width="49%">
 </p>
 
 ### Data Mixture Results
