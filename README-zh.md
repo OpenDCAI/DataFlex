@@ -57,11 +57,11 @@ FORCE_TORCHRUN=1 DISABLE_VERSION_CHECK=1 dataflex-cli train examples/train_lora/
 与原生 LlamaFactory 不同的是，你的 `.yaml` 配置文件中还必须包含 **DataFlex 特有的参数**，具体请参考 [Dataflex-Doc](https://opendcai.github.io/DataFlex-Doc/)。
 
 ## 📚 4. 实验结果
-### 数据选择实验结果
+### 数据选择与加权实验结果
 数据选择算法能够在MMLU数据集上超过random selector算法。
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/afa8f232-a338-48e4-8bb2-47a79dde008b" width="49%">
-  <img src="https://github.com/user-attachments/assets/c4e382f5-10ca-4cce-9f31-467b23032916" width="49%">
+  <img src="https://github.com/user-attachments/assets/7c00d51b-e0eb-41c0-970f-0c8ab5112fa0" width="49%">
+  <img src="https://github.com/user-attachments/assets/589d1c58-ee91-49c4-b4fd-670aee8e0945" width="49%">
 </p>
 
 ### 数据配比实验结果
