@@ -1,5 +1,8 @@
 
 # DataFlex
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/d250853b-2a03-43b0-bde3-19bf9e7142fd" width="30%">
+</p>
 
 <div align="center">
 
