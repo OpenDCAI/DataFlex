@@ -94,14 +94,15 @@ FORCE_TORCHRUN=1 DISABLE_VERSION_CHECK=1 dataflex-cli train examples/train_lora/
 
 ## 📚 4. 实验结果
 ### 数据选择与加权实验结果
-数据选择算法能够在MMLU数据集上超过random selector算法。
+我们使用 Open-Hermes-2.5 的一个子集作为训练数据集。实验结果表明，相较于随机选择（random selector）基线，所采用的数据选择算法和数据重加权算法在与训练数据集相关的 MMLU 基准测试子集上均取得了更优的性能。对于 LESS 和 NICE 算法，我们将 MMLU-Validation-Set 作为验证集，并使用由 GPT-5 生成的推理轨迹（trajectory）进行验证。
+
 <p align="center">
   <img src="https://github.com/user-attachments/assets/7c00d51b-e0eb-41c0-970f-0c8ab5112fa0" width="49%">
   <img src="https://github.com/user-attachments/assets/589d1c58-ee91-49c4-b4fd-670aee8e0945" width="49%">
 </p>
 
 ### 数据配比实验结果
-数据配比算法能够在MMLU数据集上超过baseline方法。
+我们使用SlimPajama-627B的子集的3B子集进行数据配比。数据配比算法能够在MMLU数据集上超过baseline方法。
 <div align="center">
 
 | Dataset | Baseline | DoReMi | ODM |
