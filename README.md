@@ -107,7 +107,7 @@ We use a subset of [Open-Hermes-2.5](https://huggingface.co/datasets/OpenDCAI/Da
 </p>
 
 ### Data Mixture Results
-The data mixture algorithm also outperforms baselines (default data mixture) on the MMLU benchmark.
+We use a subset of SlimPajama-627B for data mixture。The data mixture algorithm also outperforms baselines (default data mixture) on the MMLU benchmark.
 <div align="center">
 
 | Dataset | Baseline | DoReMi | ODM |
