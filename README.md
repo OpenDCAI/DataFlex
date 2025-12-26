@@ -99,7 +99,7 @@ Unlike vanilla LlamaFactory, your `.yaml` config file must also include **DataFl
 Using DataFlex can improve performance over the default LLaMA-Factory training.
 
 ### Data Selector & Reweightor Results
-The data selection algorithms and data mixture algorithm outperform the random selector baseline on the MMLU benchmark. For the Less and Nice algorithm, we set the validation set to MMLU-Validation-Set, using a GPT-5-generated trajectory.
+We use a subset of [Open-Hermes-2.5](https://huggingface.co/datasets/OpenDCAI/DataFlex-selector-openhermes-10w) as the training dataset. The data selection algorithms and data reweighting algorithm outperform the random selector baseline on the [MMLU benchmark](https://huggingface.co/datasets/OpenDCAI/dataflex-selector-MMLUSubset-test) subset relevant to the training dataset. For the Less and Nice algorithm, we set the validation set as the [MMLU-Validation-Set](https://huggingface.co/datasets/OpenDCAI/dataflex-selector-MMLUSubset-valid-cot), using a GPT-5-generated trajectory.
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/7c00d51b-e0eb-41c0-970f-0c8ab5112fa0" width="49%">
