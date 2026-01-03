@@ -9,7 +9,6 @@ finetuning_type: lora
 lora_target: all
 lora_rank: 16
 lora_alpha: 8
-# deepspeed: examples/deepspeed/ds_z3_config.json  # choices: [ds_z0_config.json, ds_z2_config.json, ds_z3_config.json]
 
 ### dataset
 dataset: alpaca_en_demo
@@ -33,12 +32,10 @@ overwrite_output_dir: true
 ### swanlab
 report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
 # use_swanlab: true
-# swanlab_project: medical_dynamic_sft
-# swanlab_run_name: qwen2_5_3b_lora_medical_50k_baseline
-# swanlab_workspace: word2li
+# swanlab_project: dynamic_sft
+# swanlab_run_name: your_run_name
+# swanlab_workspace: your_workspace
 # swanlab_api_key: AnLWTMijcbd4cyEfundi3
-# swanlab_lark_webhook_url: https://open.feishu.cn/open-apis/bot/v2/hook/ff10a391-4e51-4481-97ff-965760cae2a1
-# swanlab_lark_secret: cySzwTbCJh08349FGAhBSf
 
 ### train
 per_device_train_batch_size: 1
@@ -61,5 +58,17 @@ component_name: custom  # 选择组件名称，对应 components_cfg_file 中定
 warmup_step: 10
 update_step: 10
 update_times: 2
+
+## eval
+# val_size: 0.001
+eval_dataset: alpaca_zh_demo
+per_device_eval_batch_size: 1
+metric_for_best_model: eval_loss
+greater_is_better: false
+load_best_model_at_end: false
+eval_strategy: steps    # choices: [no, steps, epoch]
+eval_steps: 10
+# early_stopping_steps: 3
+# early_stopping_min_delta: 0.01
 
 # FORCE_TORCHRUN=1 DISABLE_VERSION_CHECK=1 dataflex-cli train examples/train_lora/selectors/custom.yaml
