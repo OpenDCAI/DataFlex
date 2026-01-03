@@ -11,3 +11,5 @@ export_dir: ../dataflex_saves/Llama-3.1-8B_lora_sft
 export_size: 5
 export_device: cpu  # choices: [cpu, auto]
 export_legacy_format: false
+
+# llamafactory-cli export examples/merge_lora/llama3_lora_sft.yaml
