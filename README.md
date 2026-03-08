@@ -122,7 +122,20 @@ We thank [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) for offering 
 We thank Zhongguancun Academy for their API and GPU support.
 Our gratitude extends to all contributors in the open-source community—their efforts collectively drive the development of DataFlex.
 
-## 🤝 6. Community & Support
+## 📜 6. Citation
+
+If you use DataFlex in your research, feel free to give us a cite.
+```bibtex
+@misc{dataflex2026,
+  title={DataFlex},
+  author={{OpenDCAI}},
+  year={2026},
+  howpublished={\url{https://github.com/OpenDCAI/DataFlex}},
+  note={GitHub repository}
+}
+```
+
+## 🤝 7. Community & Support
 
 We welcome contributions of new trainers and selectors!
 Please ensure code formatting is consistent with the existing style before submitting a PR.
