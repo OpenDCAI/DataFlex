@@ -30,11 +30,15 @@
 <img src="https://github.com/user-attachments/assets/093bfc8e-f450-4048-ad22-456edfdc00d9">
 
 **DataFlex** is an advanced dynamic training framework built on top of [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory).  
-It intelligently schedules training data during optimization and integrates several difficult-to-reproduce repositories into a unified framework. The system provides reproducible implementations of **dynamic sample selection**, **domain ratio adjustment**, and **dynamic weighting**, thereby improving both experimental reproducibility and final model performance.
+It intelligently schedules training data during optimization and integrates several difficult-to-reproduce repositories into a unified framework. The system provides reproducible implementations of **Data Selection**, **Data Mixture**, and **Data Reweighting**, thereby improving both experimental reproducibility and final model performance.
 
-DataFlex integrates seamlessly with LlamaFactory, offering researchers and developers more flexible and powerful training control, for goals and design philosophy, please refer to [Dataflex-Doc](https://opendcai.github.io/DataFlex-Doc/).
+DataFlex integrates seamlessly with LlamaFactory, offering researchers and developers more flexible and powerful training control, for goals and design philosophy, please refer to [Dataflex-Doc](https://opendcai.github.io/DataFlex-Doc/). 
+We summarize repositories related to Data Selection, Data Mixture, and Data Reweighting.
+❌ indicates that no official repository is available;
+✅ indicates that an official repository is available;
+⚠️ indicates that an official repository exists but contains issues.
 
-- **Dynamic Select Trainer**: Dynamically selects training samples according to a given strategy (e.g., focus on “hard” samples). The data selection algorithms are summarized as follows:
+- **Data Selection**: Dynamically selects training samples according to a given strategy (e.g., focus on “hard” samples). The data selection algorithms are summarized as follows:
 
 <div align="center">
 
@@ -52,18 +56,18 @@ DataFlex integrates seamlessly with LlamaFactory, offering researchers and devel
 </div>
 
 
-- **Dynamic Mix Trainer**: Dynamically adjusts the ratio of data from different domains during training. The data mixture algorithms are summarized as follows:
+- **Data Mixture**: Dynamically adjusts the ratio of data from different domains during training. The data mixture algorithms are summarized as follows:
 
 <div align="center">
 
 | Method | Category | Requires Model-in-the-Loop? | Official Repo |
 |:------:|:--------:|:---------------------------:|:-------------:|
-| **DOREMI** | Offline Mixture | ✅ Yes | ⚠️[code](https://github.com/sangmichaelxie/doremi) |
+| **DOREMI** | Offline Mixture | ✅ Yes | ⚠️[official code](https://github.com/sangmichaelxie/doremi) |
 | **ODM** | Online Mixture | ✅ Yes | ❌ |
 
 </div>
 
-- **Dynamic Weight Trainer**: Dynamically adjusts sample weights during backpropagation to emphasize data preferred by the model. The data reweighting algorithms are summarized as follows:
+- **Data Reweighting**: Dynamically adjusts sample weights during backpropagation to emphasize data preferred by the model. The data reweighting algorithms are summarized as follows:
 
 <div align="center">
 
