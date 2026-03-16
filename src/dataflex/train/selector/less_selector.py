@@ -55,18 +55,42 @@ class LessSelector(Selector):
 
     def _get_number_of_params(self, model) -> int:
         """计算模型中需要梯度的参数数量。"""
-        num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        """计算模型中需要梯度的参数数量（兼容 DeepSpeed ZeRO-3 分区参数）。"""
+        num_params = 0
+        for p in model.parameters():
+            if p.requires_grad:
+                # DeepSpeed ZeRO-3 下参数被分区，p.numel() 只返回分区后的大小，
+                # 需要用 ds_numel 获取完整参数大小，以匹配 safe_get_full_grad 返回的梯度维度。
+                if hasattr(p, 'ds_numel'):
+                    num_params += p.ds_numel
+                else:
+                    num_params += p.numel()
         if self.accelerator.is_main_process:
             logger.info(f"Total number of parameters that require gradients: {num_params}")
         return num_params
 
-    def _prepare_optimizer_state(self, model, optimizer_state: Dict) -> (torch.Tensor, torch.Tensor):
-        """从优化器状态字典中准备 Adam 的一阶和二阶矩估计。"""
+    def _prepare_optimizer_state(self, model, optimizer_state: Optional[Dict] = None) -> (torch.Tensor, torch.Tensor):
+        """从优化器状态中准备 Adam 的一阶和二阶矩估计（兼容 DeepSpeed ZeRO-3）。"""
         avg_list, avg_sq_list = [], []
-        for param in model.parameters():
-            if param.requires_grad:
-                avg_list.append(optimizer_state[param]["exp_avg"].view(-1))
-                avg_sq_list.append(optimizer_state[param]["exp_avg_sq"].view(-1))
+
+        if self.accelerator.state.deepspeed_plugin is not None:
+            # DeepSpeed 模式：使用 safe_get_full_optimizer_state 获取完整优化器状态
+            from deepspeed.utils import safe_get_full_optimizer_state
+            for param in model.parameters():
+                if param.requires_grad:
+                    exp_avg = safe_get_full_optimizer_state(param, "exp_avg")
+                    exp_avg_sq = safe_get_full_optimizer_state(param, "exp_avg_sq")
+                    if exp_avg is not None and exp_avg_sq is not None:
+                        avg_list.append(exp_avg.view(-1))
+                        avg_sq_list.append(exp_avg_sq.view(-1))
+        else:
+            # 非 DeepSpeed 模式：从传入的 optimizer_state 字典中获取
+            if optimizer_state is None:
+                raise ValueError("optimizer_state must be provided for non-DeepSpeed 'adam' gradient type.")
+            for param in model.parameters():
+                if param.requires_grad:
+                    avg_list.append(optimizer_state[param]["exp_avg"].view(-1))
+                    avg_sq_list.append(optimizer_state[param]["exp_avg_sq"].view(-1))
 
         avg = torch.cat(avg_list).to(self.device)
         avg_sq = torch.cat(avg_sq_list).to(self.device)
@@ -74,13 +98,28 @@ class LessSelector(Selector):
 
     def _obtain_gradients(self, model, batch, gradient_type, m: Optional[torch.Tensor] = None, v: Optional[torch.Tensor] = None) -> torch.Tensor:
         """根据指定的类型计算单个样本的梯度向量。"""
-        with self.accelerator.no_sync(model):
+        # 必须先对当前 batch 做 forward + backward，才能产生对应的梯度
+        if self.accelerator.state.deepspeed_plugin is not None:
+            # DeepSpeed 模式：直接调用 model forward/backward
             loss = model(**batch).loss
-            self.accelerator.backward(loss)
-
-        vectorized_grads = torch.cat(
-            [p.grad.view(-1) for p in model.parameters() if p.grad is not None]
-        )
+            model.backward(loss)
+            # 使用 safe_get_full_grad 获取完整梯度（ZeRO 分区下需要 gather）
+            from deepspeed.utils import safe_get_full_grad
+            grads = []
+            for name, p in model.named_parameters():
+                g = safe_get_full_grad(p)
+                if g is not None:
+                    grads.append(g.contiguous().view(-1))
+            vectorized_grads = torch.cat(grads) if grads else None
+            
+        else:
+            # 非 DeepSpeed 模式
+            with self.accelerator.no_sync(model):
+                loss = model(**batch).loss
+                self.accelerator.backward(loss)
+            vectorized_grads = torch.cat(
+                [p.grad.view(-1) for p in model.parameters() if p.grad is not None]
+            )
 
         if gradient_type == "adam":
             if m is None or v is None:
@@ -154,8 +193,9 @@ class LessSelector(Selector):
         # 2) 准备 Adam 状态 (如果需要)
         m, v = None, None
         if gradient_type == "adam":
-            if optimizer_state is None:
-                raise ValueError("optimizer_state must be provided for 'adam' gradient type.")
+            # DeepSpeed 模式下可通过 safe_get_full_optimizer_state 直接获取，无需传入 optimizer_state
+            if self.accelerator.state.deepspeed_plugin is None and optimizer_state is None:
+                raise ValueError("optimizer_state must be provided for non-DeepSpeed 'adam' gradient type.")
             m, v = self._prepare_optimizer_state(model, optimizer_state)
         
         # 3) 构造 DataLoader
