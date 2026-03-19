@@ -87,7 +87,7 @@ pip install llamafactory==0.9.3
 下面给出一个使用 [LESS](https://arxiv.org/abs/2402.04333) 的示例：
 
 ```bash
-FORCE_TORCHRUN=1 DISABLE_VERSION_CHECK=1 dataflex-cli train examples/train_lora/selectors/less.yaml
+dataflex-cli train examples/train_lora/selectors/less.yaml
 ```
 
 与原生 LLaMA-Factory 不同的是，你的 `.yaml` 配置文件中还必须包含 **DataFlex 特有的参数**，具体请参考 [DataFlex-Doc](https://opendcai.github.io/DataFlex-Doc/)。
