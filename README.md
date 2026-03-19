@@ -95,7 +95,7 @@ The launch command is similar to [LLaMA-Factory](https://github.com/hiyouga/LLaM
 Below is an example using [LESS](https://arxiv.org/abs/2402.04333) :
 
 ```bash
-FORCE_TORCHRUN=1 DISABLE_VERSION_CHECK=1 dataflex-cli train examples/train_lora/selectors/less.yaml
+dataflex-cli train examples/train_lora/selectors/less.yaml
 ```
 
 Unlike vanilla LlamaFactory, your `.yaml` config file must also include **DataFlex-specific parameters**, for details please refer to [DataFlex-Doc](https://opendcai.github.io/DataFlex-Doc/).
