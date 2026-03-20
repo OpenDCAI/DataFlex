@@ -33,7 +33,7 @@
 **DataFlex** is an advanced dynamic training framework built on top of [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory).  
 It intelligently schedules training data during optimization and integrates several difficult-to-reproduce repositories into a unified framework. The system provides reproducible implementations of **Data Selection**, **Data Mixture**, and **Data Reweighting**, thereby improving both experimental reproducibility and final model performance.
 
-DataFlex integrates seamlessly with LlamaFactory, offering researchers and developers more flexible and powerful training control, for goals and design philosophy, please refer to [Dataflex-Doc](https://opendcai.github.io/DataFlex-Doc/). 
+DataFlex integrates seamlessly with LLaMA-Factory, offering researchers and developers more flexible and powerful training control. For goals and design philosophy, please refer to [DataFlex-Doc](https://opendcai.github.io/DataFlex-Doc/).
 We summarize repositories related to Data Selection, Data Mixture, and Data Reweighting.
 ❌ indicates that no official repository is available;
 ✅ indicates that an official repository is available;
@@ -78,7 +78,7 @@ We summarize repositories related to Data Selection, Data Mixture, and Data Rewe
 
 </div>
 
-- **Full compatibility with LlamaFactory**, drop-in replacement.  
+- **Full compatibility with LLaMA-Factory**, drop-in replacement.  
 
 ## 📌 3. Quick Start
 
@@ -98,7 +98,7 @@ Below is an example using [LESS](https://arxiv.org/abs/2402.04333) :
 dataflex-cli train examples/train_lora/selectors/less.yaml
 ```
 
-Unlike vanilla LlamaFactory, your `.yaml` config file must also include **DataFlex-specific parameters**, for details please refer to [DataFlex-Doc](https://opendcai.github.io/DataFlex-Doc/).
+Unlike vanilla LLaMA-Factory, your `.yaml` config file must also include **DataFlex-specific parameters**. For details, please refer to [DataFlex-Doc](https://opendcai.github.io/DataFlex-Doc/).
 
 
 ## 📚 4. Experimental Results
@@ -113,12 +113,21 @@ We use a subset of [Open-Hermes-2.5](https://huggingface.co/datasets/OpenDCAI/Da
 </p>
 
 ### Data Mixture Results
-We use a subset of SlimPajama-627B for data mixture。The data mixture algorithm also outperforms baselines (default data mixture) on the MMLU benchmark.
+We use subsets of [SlimPajama-627B](https://huggingface.co/datasets/cerebras/SlimPajama-627B) for data mixture. The data mixture algorithms outperform the baseline (default data mixture) on MMLU accuracy while also achieving lower perplexity across different data domains.
+
 <div align="center">
 
-| Dataset | Baseline | DoReMi | ODM |
-|:------:|:--------:|:------:|:---:|
-|  MMLU   |  25.27   | 25.84  | 26.04 |
+| | Acc ↑ | | Perplexity (PPL) ↓ | | | | | |
+|:------:|:--------:|:------:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **Method** | **MMLU** | **ALL** | **CC** | **C4** | **SE** | **Wiki** | **GitHub** | **ArXiv** | **Book** |
+| | | | **Slim-Pajama-6B** | | | | | |
+| Baseline | 25.27 | 4.217 | 4.278 | 4.532 | 3.402 | **3.546** | **2.640** | 3.508 | 4.778 |
+| DoReMi | 25.84 | **4.134** | **4.108** | **4.358** | 3.788 | 3.997 | 3.420 | 3.413 | 4.661 |
+| ODM | **26.04** | 4.244 | 4.326 | 4.555 | **3.243** | 3.699 | 2.704 | **2.904** | **4.613** |
+| | | | **Slim-Pajama-30B** | | | | | |
+| Baseline | 25.51 | 3.584 | 3.723 | 3.505 | 2.850 | 3.215 | 3.163 | 4.540 | 5.329 |
+| DoReMi | **25.97** | 3.562 | 3.731 | **3.503** | 2.706 | 2.985 | 2.973 | 4.441 | 5.214 |
+| ODM | 25.63 | **3.429** | **3.598** | 3.519 | **2.382** | **2.713** | **2.255** | **3.487** | **4.746** |
 
 </div>
 
