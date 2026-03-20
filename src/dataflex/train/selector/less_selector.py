@@ -3,7 +3,6 @@ from dataflex.utils.selector_io import load_cached_selection, save_selection
 from .base_selector import Selector
 from dataflex.utils.logging import logger
 import torch
-from torch.nn.functional import normalize
 from typing import List, Dict, Optional
 import torch.distributed as dist
 from tqdm import tqdm
@@ -93,7 +92,9 @@ class LessSelector(Selector):
                     avg_sq_list.append(optimizer_state[param]["exp_avg_sq"].view(-1))
 
         avg = torch.cat(avg_list).to(self.device)
+        avg_list.clear()
         avg_sq = torch.cat(avg_sq_list).to(self.device)
+        avg_sq_list.clear()
         return avg, avg_sq
 
     def _obtain_gradients(self, model, batch, gradient_type, m: Optional[torch.Tensor] = None, v: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -125,16 +126,19 @@ class LessSelector(Selector):
             if m is None or v is None:
                 raise ValueError("Adam optimizer states (m, v) must be provided for 'adam' gradient type.")
             beta1, beta2, eps = 0.9, 0.999, 1e-08
-            updated_avg = beta1 * m + (1 - beta1) * vectorized_grads
-            updated_avg_sq = beta2 * v + (1 - beta2) * vectorized_grads ** 2
-            final_grads = updated_avg / torch.sqrt(updated_avg_sq + eps)
+            denom = v.mul(beta2)
+            denom.addcmul_(vectorized_grads, vectorized_grads, value=(1 - beta2))
+            denom.sqrt_().add_(eps)
+            vectorized_grads.mul_(1 - beta1).add_(m, alpha=beta1)
+            vectorized_grads.div_(denom)
+            del denom
         elif gradient_type == "sgd":
-            final_grads = vectorized_grads
+            pass
         else:
             assert False, f"Unknown gradient type: {gradient_type}"
         
         model.zero_grad()
-        return final_grads
+        return vectorized_grads
 
     def _get_trak_projector(self):
         """获取 TRAK projector，优先使用 CUDA 版本。"""
@@ -232,52 +236,40 @@ class LessSelector(Selector):
         self.accelerator.wait_for_everyone()
 
         # 6) 循环计算、投影和保存 (在每个进程上独立进行)
-        local_grads_to_project = []
-        local_indices_to_project = []
-        
         total_samples_in_loader = len(dataloader)
-        # enumerate(..., 1) 使 batch_idx 从 1 开始
+        model_device = next(model.parameters()).device
+
+        grad_buffer = torch.zeros(save_interval, num_params, device=model_device, dtype=self.dtype)
+        idx_buffer = torch.zeros(save_interval, dtype=torch.long)
+        buf_pos = 0
+
         for batch_idx, data in enumerate(tqdm(
             dataloader,
             desc=f"[Process {self.accelerator.process_index}] Calculating Gradients",
-            disable=not self.accelerator.is_local_main_process, # 主进程打印进度条
+            disable=not self.accelerator.is_local_main_process,
             dynamic_ncols=True,
             position=self.accelerator.process_index,
         ), 1):
-            
-            # 断点续传逻辑，这里的 'count' 应该是全局样本索引
-            # DistributedSampler 会自动处理分片，我们只需跳过批次即可
-            # 注意: 简单的跳过可能不精确，但对于重启来说是可接受的
-            # dataloader.sampler.set_epoch(batch_idx) # 如果需要精确重启，可能需要更复杂的sampler状态管理
-            # 这里我们简化处理，假设从头开始或不跳过
-  
             indices = data['indices']
             batch = data['batch']
 
             vectorized_grads = self._obtain_gradients(model, batch, gradient_type, m, v)
-            local_grads_to_project.append(vectorized_grads)
-            local_indices_to_project.append(indices)
+            grad_buffer[buf_pos].copy_(vectorized_grads)
+            del vectorized_grads
+            idx_buffer[buf_pos] = indices[0]
+            buf_pos += 1
 
-            # 达到保存间隔或处理完所有样本
-            if batch_idx % save_interval == 0 or batch_idx == total_samples_in_loader:
-                if local_grads_to_project:
-                    grads_tensor = torch.stack(local_grads_to_project).to(self.dtype)
-                    indices_tensor = torch.cat(local_indices_to_project)
-                    
-                    # 在当前进程上进行投影
-                    projected = projector.project(grads_tensor, model_id=0).cpu()
+            if buf_pos == save_interval or batch_idx == total_samples_in_loader:
+                projected = projector.project(grad_buffer[:buf_pos], model_id=0).cpu()
+                save_path = os.path.join(
+                    save_dir,
+                    f"grads-{idx_buffer[:buf_pos].max().item()}-rank{self.accelerator.process_index}.pt",
+                )
+                torch.save({'grads': projected, 'indices': idx_buffer[:buf_pos].clone()}, save_path)
+                del projected
+                buf_pos = 0
 
-                    # 保存投影梯度和对应的索引
-                    # 文件名包含 batch_idx 和 rank 以确保唯一性
-                    #  252 to 255     605 to 511 
-                    save_path = os.path.join(save_dir, f"grads-{indices_tensor.max().item()}-rank{self.accelerator.process_index}.pt")
-                    torch.save({'grads': projected, 'indices': indices_tensor.cpu()}, save_path)
-                    
-                    # 清空列表以备下一批
-                    local_grads_to_project = []
-                    local_indices_to_project = []
-        
-        # 等待所有进程完成文件写入
+        del grad_buffer, idx_buffer
         self.accelerator.wait_for_everyone()
 
 
@@ -307,12 +299,13 @@ class LessSelector(Selector):
                 # 使用索引将数据放回正确的位置
                 final_grads[indices_chunk] = grads_chunk
             
-            # 归一化整个张量
-            normalized_data = normalize(final_grads, dim=1)
+            norms = final_grads.norm(dim=1, keepdim=True).clamp_(min=1e-12)
+            final_grads.div_(norms)
+            del norms
             
             output_file = os.path.join(save_dir, "all_projected_grads.pt")
-            torch.save(normalized_data, output_file)
-            logger.info(f"Saved merged and normalized gradients (Shape: {normalized_data.shape}) to {output_file}")
+            torch.save(final_grads, output_file)
+            logger.info(f"Saved merged and normalized gradients (Shape: {final_grads.shape}) to {output_file}")
             
             # Optional: 清理分块文件
             for file_path in files:
