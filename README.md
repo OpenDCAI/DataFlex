@@ -64,7 +64,7 @@ We summarize repositories related to Data Selection, Data Mixture, and Data Rewe
 | Method | Category | Requires Model-in-the-Loop? | Official Repo |
 |:------:|:--------:|:---------------------------:|:-------------:|
 | **DOREMI** | Offline Mixture | ✅ Yes | ⚠️[official code](https://github.com/sangmichaelxie/doremi) |
-| **ODM** | Online Mixture | ✅ Yes | ❌ |
+| **ODM** | Online Mixture | ✅ Yes | ⚠️[official code](https://github.com/alon-albalak/online-data-mixing) |
 
 </div>
 
