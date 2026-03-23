@@ -1,0 +1,14 @@
+recursive-include src/dataflex *.py
+recursive-include src/dataflex *.yaml
+recursive-include src/dataflex *.json
+recursive-include src/dataflex *.sh
+recursive-include src/dataflex *.txt
+
+include README.md
+include requirements.txt
+include LICENSE
+
+global-exclude *.py[cod]
+global-exclude __pycache__/
+global-exclude *.so
+global-exclude *.egg-info/
