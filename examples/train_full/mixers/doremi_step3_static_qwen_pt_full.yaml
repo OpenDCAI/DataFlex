@@ -1,5 +1,5 @@
 ### model
-model_name_or_path: /path/to/ckpt/Qwen2.5-0.5B
+model_name_or_path: /path/to/ckpt/Qwen2.5-1.5B
 trust_remote_code: true
 
 ### method
@@ -23,11 +23,11 @@ dataloader_num_workers: 0
 seed: 42
 
 ### output
-output_dir: ../dataflex_saves/Qwen2.5-0.5B/doremi_step3_static_qwen_pt_full_result
+output_dir: ../dataflex_saves/Qwen2.5-1.5B/doremi_step3_static_qwen_pt_full_result
 logging_steps: 10
 save_steps: 100
 plot_loss: true
-save_only_model: false
+save_only_model: true
 overwrite_output_dir: true
 
 ### swanlab
@@ -53,9 +53,9 @@ ddp_timeout: 180000000
 ### dynamic_train - DoReMi Step 3: Large Model Training with Optimized Weights
 train_type: dynamic_mix
 components_cfg_file: src/dataflex/configs/components.yaml
-component_name: static  # 使用静态混合器
-mixture_sample_rule: mixture # 初始采样规则，mixture为根据init_mixture_proportions比例混合
-init_mixture_proportions: [0.3, 0.7] # 使用从DoReMi Step 2优化得到的权重，例如：[0.3, 0.7] 
+component_name: static  # use static mixer
+mixture_sample_rule: mixture # initial sampling rule
+init_mixture_proportions: [0.3, 0.7] # using the weights optimized from DoReMi Step 2, e.g. [0.3, 0.7] 
 static_mix: true
 warmup_step: 100
 update_step: 200
