@@ -91,30 +91,26 @@ mixers:
       # # Set to null if no reference model available
       # reference_model_path: null
       # Learning rate for domain weight updates (eta in the paper)
-      reweight_eta: 0.1 
-      # Smoothing parameter for domain weights (epsilon in the paper)
-      reweight_eps: 0.01
+      reweight_eta: 0.1
+      reweight_eps: 0.01 # Smoothing parameter for domain weights (epsilon in the paper)
 
   
   # 静态数据混合器 - 用于DoReMi算法的Step 1和Step 3
   static:
     name: static
     params:
-      # 固定比例，如果不指定则使用均匀分布
-      proportions: [0.5, 0.5]  # 对应各个域的比例
-      # proportions: null  # 使用均匀分布
+      # fixed proportions
+      proportions: [0.5, 0.5]  # corresponding proportions for each domain
+      # proportions: null  # use uniform distribution
       # proportions: [0.541, 0.287, 0.042, 0.037, 0.034, 0.031, 0.028] # For SlimePajama-6B dataset
   odm:
     name: odm
     params:
       # Online Data Mixing (ODM) uses Multi-Armed Bandits (Exp3) for dynamic mixing
-      # Based on: https://arxiv.org/abs/2312.02406
-      # Official code: https://github.com/alon-albalak/online-data-mixing
       
       # Alpha (smoothing_factor): smoothing parameter for exponential moving average (0 to 1)
       # Higher alpha = more weight on historical rewards, more stable but slower to adapt
       # Lower alpha = more responsive to recent rewards, faster adaptation but more volatile
-      # Official default: 0.9
       alpha: 0.9
       
       # Warmup steps: number of steps to use initial proportions before starting ODM
@@ -128,10 +124,9 @@ mixers:
       eval_batch_size: 8
       # Initial proportions for warmup period and ODM initialization
       # If not specified, uses uniform distribution
-      initial_proportions: [0.541, 0.287, 0.042, 0.037, 0.034, 0.031, 0.028] # for odm on SlimePajam-6B dataset
-      # initial_proportions: [0.5, 0.5] # debug
+      initial_proportions: [0.5, 0.5] # debug
       # initial_proportions: null  # Use uniform distribution if null
-
+      # initial_proportions: [0.541, 0.287, 0.042, 0.037, 0.034, 0.031, 0.028] # for odm on SlimePajam-6B dataset
 weighters:
   # 动态数据加权器
   loss:

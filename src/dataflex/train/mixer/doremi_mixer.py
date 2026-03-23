@@ -278,3 +278,35 @@ class DoremiMixer(Mixer):
         except Exception as e:
             logger.warning(f"[DoremiMixer] Failed to log weights: {e}")
     
+    def get_average_weights(self):
+        # Algorithm 1 line 36: Return ̄α = 1/T·Σα_t
+        if len(self.weight_history) == 0:
+            return self.domain_weights.copy()
+        avg_weights = np.mean(self.weight_history, axis=0)
+        return avg_weights / avg_weights.sum()
+    
+    def save_average_weights(self, output_dir):
+        try:
+            import json
+            avg_weights = self.get_average_weights()
+            os.makedirs(output_dir, exist_ok=True)
+            
+            weights_data = {
+                "description": "DoReMi Step 2: average domain weights for Step 3",
+                "update_times": len(self.weight_history),
+                "domain_names": self.mixture_manager.names,
+                "average_weights": avg_weights.tolist(),
+            }
+            
+            with open(os.path.join(output_dir, "doremi_average_weights.json"), 'w') as f:
+                json.dump(weights_data, f, indent=2)
+            
+            with open(os.path.join(output_dir, "doremi_step3_proportions.txt"), 'w') as f:
+                f.write("# DoReMi Step 3 proportions\n")
+                f.write(f"# proportions: {avg_weights.tolist()}\n")
+                for name, weight in zip(self.mixture_manager.names, avg_weights):
+                    f.write(f"{name}: {weight:.6f}\n")
+            
+            logger.info(f"[DoremiMixer] Saved average weights for Step 3")
+        except Exception as e:
+            logger.error(f"[DoremiMixer] Failed to save average weights: {e}")

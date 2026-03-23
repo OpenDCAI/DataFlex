@@ -64,7 +64,7 @@ We summarize repositories related to Data Selection, Data Mixture, and Data Rewe
 | Method | Category | Requires Model-in-the-Loop? | Official Repo |
 |:------:|:--------:|:---------------------------:|:-------------:|
 | **DOREMI** | Offline Mixture | ✅ Yes | ⚠️[official code](https://github.com/sangmichaelxie/doremi) |
-| **ODM** | Online Mixture | ✅ Yes | ❌ |
+| **ODM** | Online Mixture | ✅ Yes | ⚠️[official code](https://github.com/alon-albalak/online-data-mixing) |
 
 </div>
 
@@ -117,17 +117,106 @@ We use subsets of [SlimPajama-627B](https://huggingface.co/datasets/cerebras/Sli
 
 <div align="center">
 
-| | Acc ↑ | | Perplexity (PPL) ↓ | | | | | |
-|:------:|:--------:|:------:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **Method** | **MMLU** | **ALL** | **CC** | **C4** | **SE** | **Wiki** | **GitHub** | **ArXiv** | **Book** |
-| | | | **Slim-Pajama-6B** | | | | | |
-| Baseline | 25.27 | 4.217 | 4.278 | 4.532 | 3.402 | **3.546** | **2.640** | 3.508 | 4.778 |
-| DoReMi | 25.84 | **4.134** | **4.108** | **4.358** | 3.788 | 3.997 | 3.420 | 3.413 | 4.661 |
-| ODM | **26.04** | 4.244 | 4.326 | 4.555 | **3.243** | 3.699 | 2.704 | **2.904** | **4.613** |
-| | | | **Slim-Pajama-30B** | | | | | |
-| Baseline | 25.51 | 3.584 | 3.723 | 3.505 | 2.850 | 3.215 | 3.163 | 4.540 | 5.329 |
-| DoReMi | **25.97** | 3.562 | 3.731 | **3.503** | 2.706 | 2.985 | 2.973 | 4.441 | 5.214 |
-| ODM | 25.63 | **3.429** | **3.598** | 3.519 | **2.382** | **2.713** | **2.255** | **3.487** | **4.746** |
+<table>
+  <thead>
+    <tr>
+      <th rowspan="2">Method</th>
+      <th colspan="1">Acc ↑</th>
+      <th colspan="8">Perplexity (PPL) ↓</th>
+    </tr>
+    <tr>
+      <th>MMLU</th>
+      <th>ALL</th>
+      <th>CC</th>
+      <th>C4</th>
+      <th>SE</th>
+      <th>Wiki</th>
+      <th>GitHub</th>
+      <th>ArXiv</th>
+      <th>Book</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td colspan="10"><b>Slim-Pajama-6B</b></td>
+    </tr>
+    <tr>
+      <td>Baseline</td>
+      <td>25.27</td>
+      <td>4.217</td>
+      <td>4.278</td>
+      <td>4.532</td>
+      <td>3.402</td>
+      <td><b>3.546</b></td>
+      <td><b>2.640</b></td>
+      <td>3.508</td>
+      <td>4.778</td>
+    </tr>
+    <tr>
+      <td>DoReMi</td>
+      <td>25.84</td>
+      <td><b>4.134</b></td>
+      <td><b>4.108</b></td>
+      <td><b>4.358</b></td>
+      <td>3.788</td>
+      <td>3.997</td>
+      <td>3.420</td>
+      <td>3.413</td>
+      <td>4.661</td>
+    </tr>
+    <tr>
+      <td>ODM</td>
+      <td><b>26.04</b></td>
+      <td>4.244</td>
+      <td>4.326</td>
+      <td>4.555</td>
+      <td><b>3.243</b></td>
+      <td>3.699</td>
+      <td>2.704</td>
+      <td><b>2.904</b></td>
+      <td><b>4.613</b></td>
+    </tr>
+    <tr>
+      <td colspan="10"><b>Slim-Pajama-30B</b></td>
+    </tr>
+    <tr>
+      <td>Baseline</td>
+      <td>25.51</td>
+      <td>3.584</td>
+      <td>3.723</td>
+      <td>3.505</td>
+      <td>2.850</td>
+      <td>3.215</td>
+      <td>3.163</td>
+      <td>4.540</td>
+      <td>5.329</td>
+    </tr>
+    <tr>
+      <td>DoReMi</td>
+      <td><b>25.97</b></td>
+      <td>3.562</td>
+      <td>3.731</td>
+      <td><b>3.503</b></td>
+      <td>2.706</td>
+      <td>2.985</td>
+      <td>2.973</td>
+      <td>4.441</td>
+      <td>5.214</td>
+    </tr>
+    <tr>
+      <td>ODM</td>
+      <td>25.63</td>
+      <td><b>3.429</b></td>
+      <td><b>3.598</b></td>
+      <td>3.519</td>
+      <td><b>2.382</b></td>
+      <td><b>2.713</b></td>
+      <td><b>2.255</b></td>
+      <td><b>3.487</b></td>
+      <td><b>4.746</b></td>
+    </tr>
+  </tbody>
+</table>
 
 </div>
 
