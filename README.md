@@ -120,7 +120,7 @@ We use subsets of [SlimPajama-627B](https://huggingface.co/datasets/cerebras/Sli
 <table>
   <thead>
     <tr>
-      <th rowspan="2">方法</th>
+      <th rowspan="2">Method</th>
       <th colspan="1">Acc ↑</th>
       <th colspan="8">Perplexity (PPL) ↓</th>
     </tr>
