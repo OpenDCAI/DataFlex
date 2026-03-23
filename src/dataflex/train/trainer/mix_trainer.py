@@ -428,7 +428,16 @@ class MixTrainer(CustomSeq2SeqTrainer):
         if not isinstance(train_dataset, torch.utils.data.IterableDataset):
             dataloader_params["sampler"] = self._get_train_sampler(train_dataset)
             dataloader_params["drop_last"] = self.args.dataloader_drop_last
-            dataloader_params["worker_init_fn"] = seed_worker
+            # dataloader_params["worker_init_fn"] = seed_worker
+            
+            # Fix: seed_worker requires 3 arguments, but DataLoader only passes worker_id
+            # Use functools.partial to bind the additional arguments
+            if self.args.dataloader_num_workers > 0:
+                dataloader_params["worker_init_fn"] = functools.partial(
+                    seed_worker,
+                    num_workers=self.args.dataloader_num_workers,
+                    rank=self.args.process_index
+                )
             dataloader_params["prefetch_factor"] = self.args.dataloader_prefetch_factor
 
         return self.accelerator.prepare(DataLoader(train_dataset, **dataloader_params))
@@ -855,6 +864,21 @@ class MixTrainer(CustomSeq2SeqTrainer):
                 # 累加浮点数操作的数量
                 self.current_flos += float(self.floating_point_ops(inputs))
 
+                # for odm
+                # Update batch info for ODM mixer (if applicable)
+                if (self.finetuning_args.static_mix == False and 
+                    hasattr(self, 'mixer') and self.mixer is not None and 
+                    hasattr(self.mixer, 'update_batch_info')):
+                    # Extract domain_id from batch
+                    domain_id = inputs.get('domain_id')
+                    if domain_id is not None:
+                        # Get the first domain_id in batch (assuming batch is homogeneous)
+                        if isinstance(domain_id, torch.Tensor):
+                            domain_id = domain_id[0].item() if domain_id.numel() > 0 else None
+                        if domain_id is not None:
+                            batch_loss = tr_loss_step.item() if isinstance(tr_loss_step, torch.Tensor) else tr_loss_step
+                            self.mixer.update_batch_info(batch_loss, domain_id)
+
                 # step达到acc，同步梯度
                 if do_sync_step:
                     # Since we perform prefetching, we need to manually set sync_gradients to True
@@ -934,6 +958,7 @@ class MixTrainer(CustomSeq2SeqTrainer):
                         logger.info(f"[Dataflex] Model training paused, starting the {update_times}th dynamic data mixture...")
 
                         # Pass current training batch to mixer for λ_t computation
+                        # This aligns better with Algorithm 1 which uses current batch
                         extra_args = dict(
                             batch=inputs,
                             domain_ids=inputs.get('domain_id') if 'domain_id' in inputs else None,
@@ -1047,6 +1072,14 @@ class MixTrainer(CustomSeq2SeqTrainer):
 
         # Wait for the checkpoint to be uploaded.
         self._finish_current_push()
+
+        # Save DoReMi average weights at the end of training (Algorithm 1 line 36)
+        if hasattr(self, 'mixer') and self.mixer is not None:
+            if hasattr(self.mixer, 'save_average_weights'):
+                if self.accelerator.is_main_process:
+                    logger.info("[Dataflex] Saving DoReMi average weights for Step 2...")
+                    self.mixer.save_average_weights(args.output_dir)
+                    logger.info("[Dataflex] DoReMi Step 2 complete. Use the saved average weights for Step 2.")
 
         # After training we make sure to retrieve back the original forward pass method
         # for the embedding layer by removing the forward post hook.

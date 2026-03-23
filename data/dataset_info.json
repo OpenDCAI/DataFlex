@@ -638,6 +638,90 @@
       "prompt": "text"
     }
   },
+  "RedPajamaArXiv-6B": {
+    "file_name": "RedPajamaArXiv-6B.jsonl",
+    "columns": {
+      "prompt": "text"
+    }
+  },
+  "RedPajamaBook-6B": {
+    "file_name": "RedPajamaBook-6B.jsonl",
+    "columns": {
+      "prompt": "text"
+    }
+  },
+  "RedPajamaC4-6B": {
+    "file_name": "RedPajamaC4-6B.jsonl",
+    "columns": {
+      "prompt": "text"
+    }
+  },
+  "RedPajamaCommonCrawl-6B": {
+    "file_name": "RedPajamaCommonCrawl-6B.jsonl",
+    "columns": {
+      "prompt": "text"
+    }
+  },
+  "RedPajamaGithub-6B": {
+    "file_name": "RedPajamaGithub-6B.jsonl",
+    "columns": {
+      "prompt": "text"
+    }
+  },
+  "RedPajamaStackExchange-6B": {
+    "file_name": "RedPajamaStackExchange-6B.jsonl",
+    "columns": {
+      "prompt": "text"
+    }
+  },
+  "RedPajamaWikipedia-6B": {
+    "file_name": "RedPajamaWikipedia-6B.jsonl",
+    "columns": {
+      "prompt": "text"
+    }
+  },
+  "RedPajamaArXiv-30B": {
+    "file_name": "RedPajamaArXiv-30B.jsonl",
+    "columns": {
+      "prompt": "text"
+    }
+  },
+  "RedPajamaBook-30B": {
+    "file_name": "RedPajamaBook-30B.jsonl",
+    "columns": {
+      "prompt": "text"
+    }
+  },
+  "RedPajamaC4-30B": {
+    "file_name": "RedPajamaC4-30B.jsonl",
+    "columns": {
+      "prompt": "text"
+    }
+  },
+  "RedPajamaCommonCrawl-30B": {
+    "file_name": "RedPajamaCommonCrawl-30B.jsonl",
+    "columns": {
+      "prompt": "text"
+    }
+  },
+  "RedPajamaGithub-30B": {
+    "file_name": "RedPajamaGithub-30B.jsonl",
+    "columns": {
+      "prompt": "text"
+    }
+  },
+  "RedPajamaStackExchange-30B": {
+    "file_name": "RedPajamaStackExchange-30B.jsonl",
+    "columns": {
+      "prompt": "text"
+    }
+  },
+  "RedPajamaWikipedia-30B": {
+    "file_name": "RedPajamaWikipedia-30B.jsonl",
+    "columns": {
+      "prompt": "text"
+    }
+  },
   "c4_demo": {
     "file_name": "c4_demo.jsonl",
     "columns": {
