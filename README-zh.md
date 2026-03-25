@@ -105,8 +105,8 @@ dataflex-cli train examples/train_lora/selectors/less.yaml
 我们使用 Open-Hermes-2.5 的一个子集作为训练数据集。实验结果表明，相较于随机选择（random selector）基线，所采用的数据选择算法和数据重加权算法在与训练数据集相关的 MMLU 基准测试子集上均取得了更优的性能。对于 LESS 和 NICE 算法，我们将 MMLU-Validation-Set 作为验证集，并使用由 GPT-5 生成的推理轨迹（trajectory）进行验证。
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/7c00d51b-e0eb-41c0-970f-0c8ab5112fa0" width="49%">
-  <img src="https://github.com/user-attachments/assets/589d1c58-ee91-49c4-b4fd-670aee8e0945" width="49%">
+  <img src="https://github.com/user-attachments/assets/817c7dd7-79cf-4c70-b683-32b5b4c1722b" width="49%">
+  <img src="https://github.com/user-attachments/assets/ed5495db-1c5c-4dfd-a0cd-a941000ab33d" width="49%">
 </p>
 
 ### 数据配比实验结果
