@@ -230,12 +230,11 @@ Our gratitude extends to all contributors in the open-source community—their e
 
 If you use DataFlex in your research, feel free to give us a cite.
 ```bibtex
-@misc{dataflex2026,
-  title={DataFlex},
-  author={{OpenDCAI}},
-  year={2026},
-  howpublished={\url{https://github.com/OpenDCAI/DataFlex}},
-  note={GitHub repository}
+@article{liang2026towards,
+  title={Towards Next-Generation LLM Training: From the Data-Centric Perspective},
+  author={Liang, Hao and Zhao, Zhengyang and Han, Zhaoyang and Qiang, Meiyi and Ma, Xiaochen and Zeng, Bohan and Cai, Qifeng and Li, Zhiyu and Tang, Linpeng and Zhang, Wentao and others},
+  journal={arXiv preprint arXiv:2603.14712},
+  year={2026}
 }
 ```
 
