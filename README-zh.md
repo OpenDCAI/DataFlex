@@ -233,6 +233,22 @@ dataflex-cli train examples/train_lora/selectors/less.yaml
 
 如果您在研究中使用了 DataFlex，欢迎引用我们的项目。
 ```bibtex
+@ARTICLE{2026arXiv260326164L,
+       author = {{Liang}, Hao and {Zhao}, Zhengyang and {Qiang}, Meiyi and {Chen}, Mingrui and {Ma}, Lu and {Yu}, Rongyi and {Feng}, Hengyi and {Sun}, Shixuan and {Meng}, Zimo and {Ma}, Xiaochen and {Yang}, Xuanlin and {Cai}, Qifeng and {An}, Ruichuan and {Zeng}, Bohan and {Hao Wong}, Zhen and {Shen}, Chengyu and {He}, Runming and {Han}, Zhaoyang and {Zheng}, Yaowei and {Fu}, Fangcheng and {He}, Conghui and {Cui}, Bin and {Li}, Zhiyu and {E}, Weinan and {Zhang}, Wentao},
+        title = "{DataFlex: A Unified Framework for Data-Centric Dynamic Training of Large Language Models}",
+      journal = {arXiv e-prints},
+     keywords = {Machine Learning, Computation and Language},
+         year = 2026,
+        month = mar,
+          eid = {arXiv:2603.26164},
+        pages = {arXiv:2603.26164},
+archivePrefix = {arXiv},
+       eprint = {2603.26164},
+ primaryClass = {stat.ML},
+       adsurl = {https://ui.adsabs.harvard.edu/abs/2026arXiv260326164L},
+      adsnote = {Provided by the SAO/NASA Astrophysics Data System}
+}
+
 @article{liang2026towards,
   title={Towards Next-Generation LLM Training: From the Data-Centric Perspective},
   author={Liang, Hao and Zhao, Zhengyang and Han, Zhaoyang and Qiang, Meiyi and Ma, Xiaochen and Zeng, Bohan and Cai, Qifeng and Li, Zhiyu and Tang, Linpeng and Zhang, Wentao and others},
