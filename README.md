@@ -100,6 +100,10 @@ dataflex-cli train examples/train_lora/selectors/less.yaml
 
 Unlike vanilla LLaMA-Factory, your `.yaml` config file must also include **DataFlex-specific parameters**. For details, please refer to [DataFlex-Doc](https://opendcai.github.io/DataFlex-Doc/).
 
+## 📖 Skills
+
+- [How to Use DataFlex](skills/how_to_use.md) — Installation, CLI commands, YAML configuration, training modes, and supported algorithms.
+- [How to Add a New Algorithm](skills/how_to_add_algorithm.md) — Architecture overview, registry system, base class interfaces, and step-by-step guide for adding selectors/mixers/weighters.
 
 ## 📚 4. Experimental Results
 Using DataFlex can improve performance over the default LLaMA-Factory training.
