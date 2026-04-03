@@ -222,14 +222,25 @@ dataflex-cli train examples/train_lora/selectors/less.yaml
 
 </div>
 
+## 🧩 5. 生态系统
 
-## 🤝 5. 致谢
+DataFlex 主要聚焦于训练过程中的数据调度。若希望构建一条从原始数据出发的完整流水线，它可以与 [DataFlow](https://github.com/OpenDCAI/DataFlow) 配合使用：
+
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/7459da1b-86ec-40cc-873b-c54f10f8c291" width="70%">
+</div>
+
+[DataFlow](https://github.com/OpenDCAI/DataFlow) 通过可组合的算子工作流，将原始文件转换为适用于大语言模型训练的数据，包括文档解析、知识清洗、问答 / CoT 合成，以及训练格式转换等步骤。其输出的 JSON 数据可直接输入 DataFlex 进行训练。
+
+这两个项目彼此独立，不存在代码层面的依赖关系，仅通过标准化的数据格式进行衔接。DataFlex 可以接收来自任意来源的训练数据，包括 DataFlow、人工标注、HuggingFace 数据集，或用户自定义的数据处理脚本。
+
+## 🤝 6. 致谢
 
 我们感谢 [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) 提供了高效且易用的大模型微调框架，极大地促进了我们在训练与实验中的快速迭代。
 感谢中关村学院提供的 API 和 GPU 支持。
 同时也感谢所有开源社区的贡献者——正是你们的努力共同推动了 DataFlex 的发展。
 
-## 📜 6. 引用
+## 📜 7. 引用
 
 如果您在研究中使用了 DataFlex，欢迎引用我们的项目。
 ```bibtex
@@ -257,7 +268,7 @@ archivePrefix = {arXiv},
 }
 ```
 
-## 🤝 7. 社区与支持
+## 🤝 8. 社区与支持
 
 我们欢迎贡献新的 trainers 和 selectors！
 在提交 PR 之前，请确保代码风格与现有代码保持一致。
