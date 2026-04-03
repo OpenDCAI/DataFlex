@@ -179,7 +179,7 @@ class offline_near_Selector:
 if __name__ == "__main__":
     near = offline_near_Selector(
         candidate_path="OpenDCAI/DataFlex-selector-openhermes-10w", # split = train
-        query_path="OpenDCAI/DataFlex-selector-openhermes-10w", # split = vaildation
+        query_path="OpenDCAI/DataFlex-selector-openhermes-10w", # split = validation
         # It automatically try vllm first, then sentence-transformers
         embed_model="Qwen/Qwen3-Embedding-0.6B",
         # support method:
