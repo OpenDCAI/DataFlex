@@ -1,7 +1,7 @@
 
 # DataFlex
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/d250853b-2a03-43b0-bde3-19bf9e7142fd" width="30%">
+  <img src="https://github.com/user-attachments/assets/12b542ed-3cd9-43a9-acf0-8ebcfe564ecd" width="90%">
 </p>
 
 <div align="center">
@@ -227,7 +227,7 @@ dataflex-cli train examples/train_lora/selectors/less.yaml
 DataFlex 主要聚焦于训练过程中的数据调度。若希望构建一条从原始数据出发的完整流水线，它可以与 [DataFlow](https://github.com/OpenDCAI/DataFlow) 配合使用：
 
 <div align="center">
-  <img src="https://github.com/user-attachments/assets/7459da1b-86ec-40cc-873b-c54f10f8c291" width="70%">
+  <img src="https://github.com/user-attachments/assets/7459da1b-86ec-40cc-873b-c54f10f8c291" width="90%">
 </div>
 
 [DataFlow](https://github.com/OpenDCAI/DataFlow) 通过可组合的算子工作流，将原始文件转换为适用于大语言模型训练的数据，包括文档解析、知识清洗、问答 / CoT 合成，以及训练格式转换等步骤。其输出的 JSON 数据可直接输入 DataFlex 进行训练。
