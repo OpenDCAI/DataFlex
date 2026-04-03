@@ -272,5 +272,5 @@ We also welcome you to join the [DataFlex](https://github.com/OpenDCAI/DataFlex)
 •	💬 Join our community groups to connect with us and other contributors!
  
 <div align="center">
-  <img src="https://github.com/user-attachments/assets/c04cc04c-f1f4-49b0-9758-56d9d8d37c4a" width="60%">
+  <img src="https://github.com/user-attachments/assets/4af98244-47a8-46e2-a6c7-366fb2d99681" width="70%">
 </div>
