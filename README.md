@@ -1,7 +1,7 @@
 
 # DataFlex
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/d250853b-2a03-43b0-bde3-19bf9e7142fd" width="30%">
+  <img src="https://github.com/user-attachments/assets/12b542ed-3cd9-43a9-acf0-8ebcfe564ecd" width="90%">
 </p>
 
 <div align="center">
@@ -227,7 +227,7 @@ We use subsets of [SlimPajama-627B](https://huggingface.co/datasets/cerebras/Sli
 ## 🧩 5. Ecosystem
 DataFlex focuses on data scheduling during training. For a complete pipeline starting from raw data, it pairs well with [DataFlow](https://github.com/OpenDCAI/DataFlow):
 <div align="center">
-  <img src="https://github.com/user-attachments/assets/7459da1b-86ec-40cc-873b-c54f10f8c291" width="70%">
+  <img src="https://github.com/user-attachments/assets/7459da1b-86ec-40cc-873b-c54f10f8c291" width="90%">
 </div>
 
 [DataFlow](https://github.com/OpenDCAI/DataFlow) converts raw files into LLM training data through composable operator pipelines — document parsing, knowledge cleaning, QA / CoT synthesis, and training format conversion. The output JSON can be fed directly into DataFlex.
