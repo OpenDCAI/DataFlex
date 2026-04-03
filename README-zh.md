@@ -271,5 +271,5 @@ archivePrefix = {arXiv},
 •	💬 加入我们的社区群组，与我们及其他贡献者交流！
 
 <div align="center">
-  <img src="https://github.com/user-attachments/assets/c04cc04c-f1f4-49b0-9758-56d9d8d37c4a" width="60%">
+  <img src="https://github.com/user-attachments/assets/3a5704ac-08ac-4396-8145-8e051db5969d" width="70%">
 </div>
