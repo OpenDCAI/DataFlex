@@ -243,20 +243,11 @@ Our gratitude extends to all contributors in the open-source community—their e
 
 If you use DataFlex in your research, feel free to give us a cite.
 ```bibtex
-@ARTICLE{2026arXiv260326164L,
-       author = {{Liang}, Hao and {Zhao}, Zhengyang and {Qiang}, Meiyi and {Chen}, Mingrui and {Ma}, Lu and {Yu}, Rongyi and {Feng}, Hengyi and {Sun}, Shixuan and {Meng}, Zimo and {Ma}, Xiaochen and {Yang}, Xuanlin and {Cai}, Qifeng and {An}, Ruichuan and {Zeng}, Bohan and {Hao Wong}, Zhen and {Shen}, Chengyu and {He}, Runming and {Han}, Zhaoyang and {Zheng}, Yaowei and {Fu}, Fangcheng and {He}, Conghui and {Cui}, Bin and {Li}, Zhiyu and {E}, Weinan and {Zhang}, Wentao},
-        title = "{DataFlex: A Unified Framework for Data-Centric Dynamic Training of Large Language Models}",
-      journal = {arXiv e-prints},
-     keywords = {Machine Learning, Computation and Language},
-         year = 2026,
-        month = mar,
-          eid = {arXiv:2603.26164},
-        pages = {arXiv:2603.26164},
-archivePrefix = {arXiv},
-       eprint = {2603.26164},
- primaryClass = {stat.ML},
-       adsurl = {https://ui.adsabs.harvard.edu/abs/2026arXiv260326164L},
-      adsnote = {Provided by the SAO/NASA Astrophysics Data System}
+@article{liang2026dataflex,
+  title={DataFlex: A Unified Framework for Data-Centric Dynamic Training of Large Language Models},
+  author={Liang, Hao and Zhao, Zhengyang and Qiang, Meiyi and Chen, Mingrui and Ma, Lu and Yu, Rongyi and Feng, Hengyi and Sun, Shixuan and Meng, Zimo and Ma, Xiaochen and others},
+  journal={arXiv preprint arXiv:2603.26164},
+  year={2026}
 }
 
 @article{liang2026towards,
