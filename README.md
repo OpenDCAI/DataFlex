@@ -1,9 +1,10 @@
 
 # DataFlex
+
 <p align="center">
+ Data Select · Mix · Reweight — Right in the LLM Training Loop
   <img src="https://github.com/user-attachments/assets/12b542ed-3cd9-43a9-acf0-8ebcfe564ecd" width="90%">
 </p>
-
 <div align="center">
 
 [![Documents](https://img.shields.io/badge/Documents-Click_here-brightgreen?logo=read-the-docs)](https://OpenDCAI.github.io/DataFlex-Doc/)
