@@ -224,13 +224,21 @@ We use subsets of [SlimPajama-627B](https://huggingface.co/datasets/cerebras/Sli
 
 </div>
 
+## 🧩 5. Ecosystem
+DataFlex focuses on data scheduling during training. For a complete pipeline starting from raw data, it pairs well with [DataFlow](https://github.com/OpenDCAI/DataFlow):
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/7459da1b-86ec-40cc-873b-c54f10f8c291" width="70%">
+</div>
 
-## 🤝 5. Acknowledgements
+[DataFlow](https://github.com/OpenDCAI/DataFlow) converts raw files into LLM training data through composable operator pipelines — document parsing, knowledge cleaning, QA / CoT synthesis, and training format conversion. The output JSON can be fed directly into DataFlex.
+The two projects are independent with no code dependency, connected only by standard data formats. DataFlex accepts training data from any source — DataFlow, manual annotation, HuggingFace datasets, or custom processing scripts.
+
+## 🤝 6. Acknowledgements
 We thank [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) for offering an efficient and user-friendly framework for large model fine-tuning, which greatly facilitated rapid iteration in our training and experimentation workflows.  
 We thank Zhongguancun Academy for their API and GPU support.
 Our gratitude extends to all contributors in the open-source community—their efforts collectively drive the development of DataFlex.
 
-## 📜 6. Citation
+## 📜 7. Citation
 
 If you use DataFlex in your research, feel free to give us a cite.
 ```bibtex
@@ -258,7 +266,7 @@ archivePrefix = {arXiv},
 }
 ```
 
-## 🤝 7. Community & Support
+## 🤝 8. Community & Support
 
 We welcome contributions of new trainers and selectors!
 Please ensure code formatting is consistent with the existing style before submitting a PR.
