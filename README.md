@@ -24,6 +24,7 @@
 </div>
 
 ## 📰 1. News
+- [2026-04-04] 🎉 Our [technical report](https://huggingface.co/papers/2603.26164) ranked #1 on the Hugging Face Daily Papers leaderboard for that day.
 - [2026-03-17] We now support gradient computation under DeepSpeed ZeRO-3, enabling training and analysis of larger-scale models.
 - [2025-12-23] 🎉 We’re excited to announce the first Data-Centric Training System DataFlex, is now released! Stay tuned for future updates.
 
