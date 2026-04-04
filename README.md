@@ -86,11 +86,48 @@ We summarize repositories related to Data Selection, Data Mixture, and Data Rewe
 
 Please use the following commands for environment setup and installation👇
 
+Using `uv`:
+
 ```bash
 git clone https://github.com/OpenDCAI/DataFlex.git
 cd DataFlex
-pip install -e .
+uv pip install -r requirements.txt
+uv pip install -e .[torch]
+uv pip install llamafactory==0.9.3
+```
+
+Using `pip`:
+
+```bash
+git clone https://github.com/OpenDCAI/DataFlex.git
+cd DataFlex
+pip install -r requirements.txt
+pip install -e .[torch]
 pip install llamafactory==0.9.3
+```
+
+For first-time users, start with the base install above. `LESS` and `NICE` require the optional `traker` dependency, which may download large PyTorch/CUDA wheels.
+
+Using `uv`:
+
+```bash
+uv pip install -e .[less]
+# or
+uv pip install -e .[nice]
+```
+
+Using `pip`:
+
+```bash
+pip install -e .[less]
+# or
+pip install -e .[nice]
+```
+
+If your network is unstable, increase the timeout:
+
+```bash
+UV_HTTP_TIMEOUT=300 uv pip install -e .[less]
 ```
 
 The launch command is similar to [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory).
