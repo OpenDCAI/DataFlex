@@ -66,6 +66,9 @@ minicpm_v = [
 modelscope = ["modelscope"]
 openmind = ["openmind"]
 swanlab = ["swanlab"]
+traker = ["traker"]
+less = ["traker"]
+nice = ["traker"]
 dev = ["pre-commit", "ruff", "pytest", "build"]
 
 [tool.setuptools]
