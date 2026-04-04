@@ -7,7 +7,6 @@ from typing import List, Dict, Optional
 import torch.distributed as dist
 from tqdm import tqdm
 from torch.utils.data import DataLoader, Dataset
-from trak.projectors import BasicProjector, CudaProjector, ProjectionType
 import os
 import glob 
 
@@ -226,6 +225,14 @@ class NICESelector(Selector):
     def _get_trak_projector(self):
         """获取 TRAK projector，优先使用 CUDA 版本。"""
         try:
+            from trak.projectors import BasicProjector, CudaProjector
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "NICE selector requires the optional dependency `traker`. "
+                "Install it with `uv pip install -e .[nice]` or `uv pip install traker`."
+            ) from exc
+
+        try:
             import fast_jl
             num_sms = torch.cuda.get_device_properties(self.device.index).multi_processor_count
             fast_jl.project_rademacher_8(torch.zeros(8, 1_000, device=self.device), 512, 0, num_sms)
@@ -425,6 +432,14 @@ class NICESelector(Selector):
                                               rl_mode: bool = False,
                                               optimizer=None):
         """统一采集梯度、执行投影并保存，rl_mode 控制是否启用蒙特卡洛采样。"""
+        try:
+            from trak.projectors import ProjectionType
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "NICE selector requires the optional dependency `traker`. "
+                "Install it with `uv pip install -e .[nice]` or `uv pip install traker`."
+            ) from exc
+
         # 1) 初始化 Projector (每个进程都需要一个)
         num_params = self._get_number_of_params(model)
         projector_class = self._get_trak_projector()
