@@ -25,5 +25,4 @@ av
 librosa
 tyro<0.9.0
 omegaconf
-traker
 #faiss
