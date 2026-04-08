@@ -90,7 +90,12 @@ Please use the following commands for environment setup and installation👇
 git clone https://github.com/OpenDCAI/DataFlex.git
 cd DataFlex
 pip install -e .
+
+# In a Python 3.10 environment
 pip install llamafactory==0.9.3
+
+# In a Python 3.11+ environment
+pip install llamafactory==0.9.4
 ```
 
 The launch command is similar to [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory).
