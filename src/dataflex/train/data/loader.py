@@ -132,11 +132,28 @@ def get_dataset(
         seed=training_args.seed,
         logger=logger,
     )
-    # 这里虚假的rebuild，trainer中会根据比例和num_samples再rebuild一次
-    # snapshot = manager.rebuild()
-    # dataset_module["train_dataset"] = snapshot
-    # logger.info_rank0(f"[Dataflex] Built initial mixed snapshot: size={len(snapshot)} | "
-    #                   f"sources={list(per_source_pp.keys())}")
+
+    # ── Load independent eval datasets for mixer (e.g. gate load evaluation) ──
+    mixer_eval_names = getattr(data_args, 'mixer_eval_dataset', None)
+    if mixer_eval_names:
+        logger.info_rank0(f"[Dataflex] Loading mixer eval datasets: {mixer_eval_names}")
+        with training_args.main_process_first(desc="load mixer eval dataset", local=(not data_args.data_shared_file_system)):
+            mixer_eval_raw = _get_merged_dataset(
+                mixer_eval_names, model_args, data_args, training_args, stage, return_dict=True
+            )
+        mixer_eval_pp = {}
+        for name, ds in mixer_eval_raw.items():
+            mixer_eval_pp[name] = _get_preprocessed_dataset(
+                ds, data_args, training_args, stage, template, tokenizer, processor, is_eval=True
+            )
+        # Map eval dataset names back to training domain names:
+        # e.g. "code_eval" -> "code", so dynamic_moe_mixer can look up by domain name
+        mixer_eval_by_domain = {}
+        for eval_name, eval_ds in mixer_eval_pp.items():
+            domain = eval_name.replace("_eval", "")
+            mixer_eval_by_domain[domain] = eval_ds
+            logger.info_rank0(f"[Dataflex] Mixer eval: '{eval_name}' -> domain '{domain}' ({len(eval_ds)} samples)")
+        manager.mixer_eval_datasets = mixer_eval_by_domain
 
     # 可选：把 manager 留给外部（方便在 callback 里重建）
     # 例如附在 dataset_module 上（Trainer 不会用到这个字段）
