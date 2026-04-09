@@ -1,6 +1,6 @@
 # configs/components.yaml
 selectors:
-  # 动态数据选择器
+  # Dynamic selectors
   nice:
     name: nice
     params:
@@ -76,7 +76,7 @@ selectors:
       cache_dir: ../dataflex_saves/custom_output
 
 mixers:
-  # 动态数据混合器
+  # Dynamic mixers
   random:
     name: random
     params:
@@ -95,7 +95,7 @@ mixers:
       reweight_eps: 0.01 # Smoothing parameter for domain weights (epsilon in the paper)
 
   
-  # 静态数据混合器 - 用于DoReMi算法的Step 1和Step 3
+  # Static mixer - for DoReMi's Step 1 and Step 3
   static:
     name: static
     params:
@@ -127,8 +127,18 @@ mixers:
       initial_proportions: [0.5, 0.5] # debug
       # initial_proportions: null  # Use uniform distribution if null
       # initial_proportions: [0.541, 0.287, 0.042, 0.037, 0.034, 0.031, 0.028] # for odm on SlimePajam-6B dataset
+  
+  dynamic_moe:
+    name: dynamic_moe
+    params:
+      eta: 10.0           # Update step size
+      c: 0.05             # Smoothing parameter
+      collect_steps: 5    # Number of batches to sample per domain to estimate gate loads
+      eval_samples: 1000
+      eval_batch_size: 32
+  
 weighters:
-  # 动态数据加权器
+  # Dynamic data weights
   loss:
     name: loss
     params:
