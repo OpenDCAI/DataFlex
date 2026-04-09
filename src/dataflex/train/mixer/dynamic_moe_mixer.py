@@ -25,8 +25,8 @@ from .base_mixer import Mixer
 from transformers.trainer_pt_utils import nested_detach
 
 
-@register_mixer("dynamic_moe_optimized")
-class DynamicMoEMixerOptimized(Mixer):
+@register_mixer("dynamic_moe")
+class DynamicMoEMixer(Mixer):
     def __init__(self, mixture_manager, eta: float = 10.0, c: float = 0.05,
                  collect_steps: int = 10, eval_samples: int = 1000,
                  eval_batch_size: int = 32,
@@ -69,7 +69,7 @@ class DynamicMoEMixerOptimized(Mixer):
                 if name in pre_loaded:
                     self.eval_datasets[name] = pre_loaded[name]
                     logger.info(
-                        f"[DynamicMoEMixerOptimized] Domain '{name}': using independent eval dataset "
+                        f"[DynamicMoEMixer] Domain '{name}': using independent eval dataset "
                         f"({len(pre_loaded[name])} samples)"
                     )
                 else:
@@ -77,7 +77,7 @@ class DynamicMoEMixerOptimized(Mixer):
                     n = len(dataset)
                     n_eval = min(eval_samples, n // 2)
                     if n_eval <= 0:
-                        logger.warning(f"[DynamicMoEMixerOptimized] Domain '{name}' has {n} samples, too few to split eval set.")
+                        logger.warning(f"[DynamicMoEMixer] Domain '{name}' has {n} samples, too few to split eval set.")
                         self.eval_datasets[name] = dataset
                         continue
                     eval_rng = np.random.RandomState(seed=0)
@@ -87,10 +87,10 @@ class DynamicMoEMixerOptimized(Mixer):
                     self.eval_datasets[name] = dataset.select(eval_indices)
                     self.mixture_manager.sources[name] = dataset.select(train_indices)
                     logger.info(
-                        f"[DynamicMoEMixerOptimized] Domain '{name}': no independent eval, "
+                        f"[DynamicMoEMixer] Domain '{name}': no independent eval, "
                         f"split {n_eval} from training (train: {len(train_indices)})"
                     )
-            logger.info("[DynamicMoEMixerOptimized] Using independent eval datasets for gate load evaluation.")
+            logger.info("[DynamicMoEMixer] Using independent eval datasets for gate load evaluation.")
         else:
             eval_rng = np.random.RandomState(seed=0)
             for name in self.mixture_manager.names:
@@ -99,7 +99,7 @@ class DynamicMoEMixerOptimized(Mixer):
                 n_eval = min(eval_samples, n // 2)
 
                 if n_eval <= 0:
-                    logger.warning(f"[DynamicMoEMixerOptimized] Domain '{name}' has {n} samples, too few to split eval set.")
+                    logger.warning(f"[DynamicMoEMixer] Domain '{name}' has {n} samples, too few to split eval set.")
                     self.eval_datasets[name] = dataset
                     continue
 
@@ -111,10 +111,10 @@ class DynamicMoEMixerOptimized(Mixer):
                 self.mixture_manager.sources[name] = dataset.select(train_indices)
 
                 logger.info(
-                    f"[DynamicMoEMixerOptimized] Domain '{name}': split {n_eval} eval samples "
+                    f"[DynamicMoEMixer] Domain '{name}': split {n_eval} eval samples "
                     f"(train: {len(train_indices)}, eval: {n_eval})"
                 )
-            logger.info("[DynamicMoEMixerOptimized] No independent eval datasets found, split from training data.")
+            logger.info("[DynamicMoEMixer] No independent eval datasets found, split from training data.")
 
     # ── Optimization 1: pre-build & cache eval batches ──────────────────────
 
@@ -126,7 +126,7 @@ class DynamicMoEMixerOptimized(Mixer):
         the first mix() produces identical batches. Subsequent mix() calls
         reuse the cache (the paper uses the same eval data every time).
         """
-        logger.info("[DynamicMoEMixerOptimized] Building eval batch cache (one-time cost) ...")
+        logger.info("[DynamicMoEMixer] Building eval batch cache (one-time cost) ...")
         cache = {}
         rng = np.random.RandomState(42)  # same starting seed as original
 
@@ -157,12 +157,12 @@ class DynamicMoEMixerOptimized(Mixer):
 
             cache[name] = batches
             logger.info(
-                f"[DynamicMoEMixerOptimized] Cached {len(batches)} batches "
+                f"[DynamicMoEMixer] Cached {len(batches)} batches "
                 f"({num_samples} samples, bs={batch_size}) for domain '{name}'"
             )
 
         self._eval_batch_cache = cache
-        logger.info("[DynamicMoEMixerOptimized] Eval batch cache ready.")
+        logger.info("[DynamicMoEMixer] Eval batch cache ready.")
 
     # ── Optimization 2-4: efficient gate load collection ────────────────────
 
@@ -235,7 +235,7 @@ class DynamicMoEMixerOptimized(Mixer):
                         domain_load_sum += gate_load_cpu
                     else:
                         if domain_load_sum is None:
-                            logger.warning(f"[DynamicMoEMixerOptimized] Model output does not contain 'gate_load'. Using uniform load.")
+                            logger.warning(f"[DynamicMoEMixer] Model output does not contain 'gate_load'. Using uniform load.")
                         if num_experts is None:
                             num_experts = 8
                         if domain_load_sum is None:
@@ -289,7 +289,7 @@ class DynamicMoEMixerOptimized(Mixer):
         """
         data_collator = kwargs.get('data_collator')
         if data_collator is None:
-            logger.warning("[DynamicMoEMixerOptimized] data_collator not found in kwargs, cannot collect gate loads. Returning current weights.")
+            logger.warning("[DynamicMoEMixer] data_collator not found in kwargs, cannot collect gate loads. Returning current weights.")
             return self.current_weights
 
         domain_names = self.mixture_manager.names
@@ -299,24 +299,24 @@ class DynamicMoEMixerOptimized(Mixer):
 
         # ── Detailed diagnostic logging ──────────────────────────────────────
         np.set_printoptions(precision=6, suppress=True)
-        logger.info(f"[DynamicMoEMixerOptimized] ═══ Step {step_id} Diagnostic ═══")
-        logger.info(f"[DynamicMoEMixerOptimized] Domain order: {domain_names}")
+        logger.info(f"[DynamicMoEMixer] ═══ Step {step_id} Diagnostic ═══")
+        logger.info(f"[DynamicMoEMixer] Domain order: {domain_names}")
         for i, name in enumerate(domain_names):
-            logger.info(f"[DynamicMoEMixerOptimized] O_hat[{name}] (L1-normalized gate load): {O_hat[i]}")
+            logger.info(f"[DynamicMoEMixer] O_hat[{name}] (L1-normalized gate load): {O_hat[i]}")
 
         # 3. L2 distance across datasets (identical to original)
         l2_dist_matrix = np.linalg.norm(O_hat[:, np.newaxis] - O_hat, axis=2)  # [|D|, |D|]
 
-        logger.info(f"[DynamicMoEMixerOptimized] L2 Distance Matrix:")
+        logger.info(f"[DynamicMoEMixer] L2 Distance Matrix:")
         for i, name_i in enumerate(domain_names):
             row_str = "  ".join(f"{name_j}={l2_dist_matrix[i,j]:.6f}" for j, name_j in enumerate(domain_names))
-            logger.info(f"[DynamicMoEMixerOptimized]   {name_i}: {row_str}")
+            logger.info(f"[DynamicMoEMixer]   {name_i}: {row_str}")
 
         # 4. Delta_i = mean_j(||load_i - load_j||_2) — includes self-distance=0
         Delta = l2_dist_matrix.mean(axis=1)  # [|D|]
 
         delta_detail = ", ".join(f"{name}={Delta[i]:.6f}" for i, name in enumerate(domain_names))
-        logger.info(f"[DynamicMoEMixerOptimized] Delta (mean L2 dist): {delta_detail}")
+        logger.info(f"[DynamicMoEMixer] Delta (mean L2 dist): {delta_detail}")
 
         # 5. Updated sampling weights (Algorithm 1 lines 6-9)
         log_w_prev = np.log(self.current_weights + 1e-10)
@@ -335,9 +335,9 @@ class DynamicMoEMixerOptimized(Mixer):
 
         old_w_str = ", ".join(f"{name}={self.current_weights[i]:.6f}" for i, name in enumerate(domain_names))
         new_w_str = ", ".join(f"{name}={new_weights[i]:.6f}" for i, name in enumerate(domain_names))
-        logger.info(f"[DynamicMoEMixerOptimized] Old weights: {old_w_str}")
-        logger.info(f"[DynamicMoEMixerOptimized] New weights: {new_w_str}")
-        logger.info(f"[DynamicMoEMixerOptimized] ═══ End Step {step_id} ═══")
+        logger.info(f"[DynamicMoEMixer] Old weights: {old_w_str}")
+        logger.info(f"[DynamicMoEMixer] New weights: {new_w_str}")
+        logger.info(f"[DynamicMoEMixer] ═══ End Step {step_id} ═══")
 
         self.current_weights = new_weights
 
@@ -375,7 +375,7 @@ class DynamicMoEMixerOptimized(Mixer):
             with open(weights_file, "a") as f:
                 f.write(json.dumps(log_entry) + "\n")
 
-            logger.info(f"[DynamicMoEMixerOptimized] Saved weights to {weights_file} at step {step_id}")
+            logger.info(f"[DynamicMoEMixer] Saved weights to {weights_file} at step {step_id}")
 
         except Exception as e:
-            logger.warning(f"[DynamicMoEMixerOptimized] Failed to save weights: {e}")
+            logger.warning(f"[DynamicMoEMixer] Failed to save weights: {e}")
