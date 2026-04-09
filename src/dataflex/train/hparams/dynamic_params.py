@@ -518,14 +518,14 @@ class DynamicFinetuningArguments(
         default=False,
         metadata={"help": "Whether or not to compute effective tokens per second."},
     )
-    # 动态训练的参数
+    # hyperparameter for dynamic training
     train_type: str = field(
-        default="static_full",
+        default="static",
         metadata={
             "help": (
                 "Specifies the type of training to use when `enable_dynamic_train` is True. "
-                "Choices: ['static_full', 'dynamic_select', 'dynamic_mix', 'dynamic_weighting']. "
-                "If static_full, uses default LlamaFactory trainer."
+                "Choices: ['static', 'dynamic_select', 'dynamic_mix', 'dynamic_weighting']. "
+                "If static, uses default LlamaFactory trainer."
             )
         }
     )
@@ -536,7 +536,7 @@ class DynamicFinetuningArguments(
     component_name: str = field(
         default="Loss",
         metadata={"help": "The component name defined in the components configuration file."},
-    ) 
+    )
     warmup_step: int = field(
         default=0,
         metadata={"help": "Warm up steps for dynamic training"},
@@ -556,6 +556,10 @@ class DynamicFinetuningArguments(
     train_step: int = field(
         default=0,
         metadata={"help": "Only used in dynamic weight trainer and mix trainer (static_mix=True). Total training steps (including warmup)."},
+    )
+    freeze_gate: bool = field(
+        default=False,
+        metadata={"help": "Whether to freeze gate parameters in MoE models during SFT training."},
     )
 
     def __post_init__(self):
