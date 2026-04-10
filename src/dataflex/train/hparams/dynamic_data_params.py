@@ -146,7 +146,10 @@ class DataArguments:
         default=None,
         metadata={"help": "Initial proportions for sampling from each dataset in mixture."},
     )
-
+    mixer_eval_dataset: Optional[str] = field(
+        default=None,
+        metadata={"help": "Independent eval dataset(s) for dynamic mixer (e.g. gate load evaluation). Use commas to separate multiple datasets."},
+    )
 
     def __post_init__(self):
         def split_arg(arg):
@@ -156,6 +159,7 @@ class DataArguments:
 
         self.dataset = split_arg(self.dataset)
         self.eval_dataset = split_arg(self.eval_dataset)
+        self.mixer_eval_dataset = split_arg(self.mixer_eval_dataset)
 
         if self.media_dir is None:
             self.media_dir = self.dataset_dir
