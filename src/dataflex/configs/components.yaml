@@ -117,11 +117,11 @@ mixers:
       # Typically 1% of total training steps
       warmup_steps: 2000
       # warmup_steps: 10 # debug
-      # Number of samples to evaluate per domain when computing rewards
-      num_eval_samples: 500
-      # num_eval_samples: 10 # debug
-      # Batch size for evaluation
-      eval_batch_size: 8
+      # reward_scale: Amplify loss signal for better domain differentiation
+      reward_scale: 15.0
+      
+      # min_exploration_rate: Minimum exploration rate (annealing floor)
+      min_exploration_rate: 0.03
       # Initial proportions for warmup period and ODM initialization
       # If not specified, uses uniform distribution
       initial_proportions: [0.5, 0.5] # debug
