@@ -271,6 +271,19 @@ class MixTrainer(CustomSeq2SeqTrainer):
         else:
             logger.info(f"[Dataflex] No mixture manager available, using standard training.")
         logger.info("[Dataflex] MixTrainer initialized")
+    
+        #########################################################
+        # SFT Data Mixer: Dynamic MoE
+        if getattr(finetuning_args, 'freeze_gate', False):
+            frozen_count = 0
+            for name_p, param in self.model.named_parameters():
+                if "gate" in name_p:
+                    param.requires_grad = False
+                    frozen_count += 1
+            logger.info(f"[Dataflex] Froze {frozen_count} gate parameters (freeze_gate=True)")
+
+        logger.info("[Dataflex] MixTrainer initialized")
+        #########################################################
 
     @override
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
