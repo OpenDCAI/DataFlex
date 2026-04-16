@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "dataflex"
 authors = [
     {name = "Hao Liang", email = "hao.liang@stu.pku.edu.cn"},
+    {name = "Mingrui Chen", email = "charmier2003@gmail.con"},
 ]
 description = "A data-centric training system for Large Language Models"
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -29,9 +30,9 @@ keywords = ["AI", "data-centric", "LLM", "training", "data selection", "Data Mix
 dynamic = ["version", "dependencies"]
 
 [project.urls]
-Github = "https://github.com/Open-DataFlow/DataFlex"
-Documentation = "https://open-dataflow.github.io/DataFlex-Doc/"
-"Bug Reports" = "https://github.com/Open-DataFlow/DataFlex/issues"
+Github = "https://github.com/OpenDCAI/DataFlex"
+Documentation = "https://opendcai.github.io/DataFlow-Doc"
+"Bug Reports" = "https://github.com/OpenDCAI/DataFlex/issues"
 
 [project.scripts]
 dataflex-cli = "dataflex.cli:main"
