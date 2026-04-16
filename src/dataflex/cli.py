@@ -146,8 +146,12 @@ def print_welcome():
         version = "unknown"
 
     print("=" * 60)
-    print(" 🎉 Welcome to DataFlex, a data-centric training system.")
-    print(f" 🚀 Installed version: {version}")
+    try:
+        print(" 🎉 Welcome to DataFlex, a data-centric training system.")
+        print(f" 🚀 Installed version: {version}")
+    except UnicodeEncodeError:
+        print(" Welcome to DataFlex, a data-centric training system.")
+        print(f" Installed version: {version}")
     print("=" * 60)
 
 def main():

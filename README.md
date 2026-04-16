@@ -92,7 +92,7 @@ cd DataFlex
 pip install -e .
 ```
 
-> **Note:** Python 3.11+ is recommended. The core dependencies (including `llamafactory` and `deepspeed`) will be installed automatically. If you are using Python 3.10, you need to install a compatible version of `llamafactory` manually.
+> **Note:** Python 3.11+ is recommended. The core dependencies (including `llamafactory`) will be installed automatically. If you are using Python 3.10, you need to install a compatible version of `llamafactory` manually.
 
 The launch command is similar to [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory).
 Below is an example using [LESS](https://arxiv.org/abs/2402.04333) :
