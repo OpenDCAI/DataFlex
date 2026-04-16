@@ -26,6 +26,9 @@ jobs:
         python: ["3.10", "3.11", "3.12"]
 
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
@@ -53,13 +56,14 @@ jobs:
           UV_SYSTEM_PYTHON: "1"
         run: |
           uv pip install --no-cache -r requirements.txt
-          uv pip install -e .[dev]
+          uv pip install -e ".[dev]"
           uv pip install llamafactory
 
       - name: Smoke test CLI
         env:
           PYTHONDONTWRITEBYTECODE: 1
         run: |
+          python -m dataflex.cli version
           dataflex-cli version
           llamafactory-cli version
 
