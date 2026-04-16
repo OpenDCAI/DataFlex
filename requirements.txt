@@ -29,3 +29,6 @@ av
 librosa
 omegaconf
 traker
+llamafactory==0.9.3; python_version < '3.11'
+llamafactory==0.9.4; python_version >= '3.11'
+deepspeed
