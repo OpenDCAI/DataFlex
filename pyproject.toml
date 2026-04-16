@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "dataflex"
 authors = [
     {name = "Hao Liang", email = "hao.liang@stu.pku.edu.cn"},
-    {name = "Mingrui Chen", email = "charmier2003@gmail.con"},
+    {name = "Mingrui Chen", email = "charmier2003@gmail.com"},
 ]
 description = "A data-centric training system for Large Language Models"
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -38,7 +38,7 @@ Documentation = "https://opendcai.github.io/DataFlow-Doc"
 dataflex-cli = "dataflex.cli:main"
 
 [project.optional-dependencies]
-torch = ["torch>=2.0.0", "torchvision>=0.15.0"]
+torch = ["torch>=2.4.0,<=2.10.0", "torchvision>=0.19.0,<=0.21.0", "torchaudio>=2.4.0,<=2.6.0"]
 torch-npu = ["torch==2.4.0", "torch-npu==2.4.0.post2", "decorator"]
 metrics = ["nltk", "jieba", "rouge-chinese"]
 deepspeed = ["deepspeed>=0.10.0,<=0.16.9"]
@@ -49,21 +49,10 @@ eetq = ["eetq"]
 gptq = ["optimum>=1.24.0", "gptqmodel>=2.0.0"]
 aqlm = ["aqlm[gpu]>=1.1.0"]
 vllm = ["vllm>=0.4.3,<=0.9.1"]
-sglang = ["sglang[srt]>=0.4.5", "transformers==4.51.1"]
 galore = ["galore-torch"]
 apollo = ["apollo-torch"]
 badam = ["badam>=1.2.1"]
 adam-mini = ["adam-mini"]
-minicpm_v = [
-    "soundfile",
-    "torchvision",
-    "torchaudio",
-    "vector_quantize_pytorch",
-    "vocos",
-    "msgpack",
-    "referencing",
-    "jsonschema_specifications",
-]
 modelscope = ["modelscope"]
 openmind = ["openmind"]
 swanlab = ["swanlab"]
