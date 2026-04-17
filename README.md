@@ -87,6 +87,12 @@ We summarize repositories related to Data Selection, Data Mixture, and Data Rewe
 Please use the following commands for environment setup and installation👇
 
 ```bash
+pip install dataflex
+```
+
+Or install from source for development:
+
+```bash
 git clone https://github.com/OpenDCAI/DataFlex.git
 cd DataFlex
 pip install -e .
