@@ -547,7 +547,7 @@ class DynamicFinetuningArguments(
     )
     update_times: int = field(
         default=1,
-        metadata={"help": "Update times per Flex epoch for dynamic select or mix training. Use <= 0 for no fixed update count."},
+        metadata={"help": "Update times per Flex epoch for dynamic selection. Use <= 0 for no fixed update count."},
     )
     static_mix: bool = field(
         default=False,

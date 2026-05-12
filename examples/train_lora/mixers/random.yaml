@@ -56,7 +56,7 @@ components_cfg_file: src/dataflex/configs/components.yaml
 component_name: random
 warmup_step: 100
 update_step: 200
-update_times: 3 # Updates per Flex epoch; repeats by num_train_epochs
+update_times: 3
 
 eval_dataset: mmlu_eval
 

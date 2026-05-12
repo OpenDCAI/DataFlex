@@ -53,4 +53,4 @@ mixture_sample_rule: mixture     # 初始采样规则，mixture为根据init_mix
 init_mixture_proportions: [0.7, 0.3]         # 对应初始的比例
 warmup_step: 4
 update_step: 3
-update_times: 2 # Updates per Flex epoch; repeats by num_train_epochs
+update_times: 2

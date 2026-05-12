@@ -397,6 +397,8 @@ class SelectTrainer(CustomSeq2SeqTrainer):
             steps_per_epoch = max(1, int(np.ceil(len(self.train_dataset) / total_train_batch_size)))
             max_steps = int(np.ceil(args.num_train_epochs * steps_per_epoch))
             epoch_update_steps = steps_per_epoch
+        if self.finetuning_args.train_step > 0 and args.num_train_epochs != 1:
+            logger.warning("[Dataflex] train_step is set; num_train_epochs will be ignored.")
         epoch_based = False
         logger.info(f"[Dataflex]Set max train steps to {max_steps}")
         logger.info(f"[Dataflex]Set epoch_based = False")
@@ -782,7 +784,17 @@ class SelectTrainer(CustomSeq2SeqTrainer):
                         if epoch_update_steps is not None
                         else self.state.global_step
                     )
-                    if step_in_epoch == 0 and epoch_update_steps is not None and self.state.global_step < max_steps:
+                    if (
+                        step_in_epoch == 0
+                        and epoch_update_steps is not None
+                        and self.state.global_step > 0
+                        and self.state.global_step < max_steps
+                    ):
+                        self.accelerator.wait_for_everyone()
+                        torch.cuda.empty_cache()
+                        if dist.is_initialized():
+                            dist.barrier()
+
                         warmup_indices = self.selector.warmup(total_warmup_samples, replacement=True)
                         current_dataloader = self.get_train_dataloader(warmup_indices)
                         current_iterator = iter(current_dataloader)

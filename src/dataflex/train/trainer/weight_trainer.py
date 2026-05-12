@@ -309,6 +309,8 @@ class WeightTrainer(CustomSeq2SeqTrainer):
         # Issue #49: support num_train_epochs while keeping dynamic-step training
         if self.finetuning_args.train_step > 0:
             max_steps = self.finetuning_args.train_step
+            if args.num_train_epochs != 1:
+                logger.warning("[Dataflex] train_step is set; num_train_epochs will be ignored.")
         epoch_based = False
         logger.info(f"[Dataflex]Set max train steps to {max_steps}")
         logger.info(f"[Dataflex]Set epoch_based = False")
