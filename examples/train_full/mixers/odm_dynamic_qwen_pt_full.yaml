@@ -61,8 +61,8 @@ mixture_sample_rule: mixture # 初始采样规则，mixture为根据init_mixture
 init_mixture_proportions: [0.5, 0.5] # initial weights
 warmup_step: 10
 update_step: 10
-update_times: -1  # -1 means to continuously update until the training ends (calculated based on num_train_epochs)
-# train_step: 1000  # optional: explicitly specify the total training steps (priority over num_train_epochs)
+update_times: -1  # No fixed updates; train by num_train_epochs/train_step
+# train_step: 1000  # Total steps; overrides num_train_epochs
 
 # eval_dataset: mmlu_eval # TODO: Undefined dataset mmlu_eval in dataset_info.json.
 # eval_dataset: alpaca_zh_demo  # SFT format, not suitable for PT

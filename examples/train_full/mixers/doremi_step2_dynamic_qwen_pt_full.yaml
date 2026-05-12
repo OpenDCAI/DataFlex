@@ -58,7 +58,7 @@ mixture_sample_rule: mixture # initial sampling rule, mixture is according to th
 init_mixture_proportions: [0.5, 0.5] # reference weight
 warmup_step: 100
 update_step: 200
-update_times: 3
+update_times: 3 # Updates per Flex epoch; repeats by num_train_epochs
 
 # eval_dataset: mmlu_eval # TODO: Undefined dataset mmlu_eval in dataset_info.json.
 # eval_dataset: alpaca_zh_demo  # SFT format, not suitable for PT

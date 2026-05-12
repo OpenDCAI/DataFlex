@@ -59,7 +59,7 @@ init_mixture_proportions: [0.5, 0.5] # corresponding initial proportions, here u
 static_mix: true
 warmup_step: 100
 update_step: 200
-update_times: 3
+update_times: 3 # Ignored when static_mix=true
 
 # eval_dataset: mmlu_eval # TODO: Undefined dataset mmlu_eval in dataset_info.json.
 # eval_dataset: alpaca_zh_demo  # SFT format, not suitable for PT

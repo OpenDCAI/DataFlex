@@ -523,8 +523,8 @@ class MixTrainer(CustomSeq2SeqTrainer):
                     # Calculate steps from num_train_epochs and available data
                     # First, get the original dataset size to estimate steps per epoch
                     original_dataset_size = sum(len(dataset) for dataset in self.mixture_manager.sources.values())
-                    steps_per_epoch = max(1, original_dataset_size // total_train_batch_size)
-                    total_steps = int(steps_per_epoch * args.num_train_epochs)
+                    steps_per_epoch = max(1, int(np.ceil(original_dataset_size / total_train_batch_size)))
+                    total_steps = int(np.ceil(steps_per_epoch * args.num_train_epochs))
                     logger.info(f"[Dataflex] Calculated train_step={total_steps} from num_train_epochs={args.num_train_epochs} "
                                f"(dataset_size={original_dataset_size}, steps_per_epoch={steps_per_epoch})")
                 
@@ -547,31 +547,39 @@ class MixTrainer(CustomSeq2SeqTrainer):
             len_dataloader, # 等于数据集长度/worldsize/micro_batchsize
             max_steps,
         ) = self.set_initial_training_values(args, train_dataloader, total_train_batch_size)
+        # Issue #49: support num_train_epochs while keeping dynamic-step training
+        epoch_update_steps = None
         if self.finetuning_args.static_mix:
             if self.finetuning_args.train_step > 0:
                 max_steps = self.finetuning_args.train_step
             else:
                 # Use the calculated total_steps from above
                 original_dataset_size = sum(len(dataset) for dataset in self.mixture_manager.sources.values())
-                steps_per_epoch = max(1, original_dataset_size // total_train_batch_size)
-                max_steps = int(steps_per_epoch * args.num_train_epochs)
+                steps_per_epoch = max(1, int(np.ceil(original_dataset_size / total_train_batch_size)))
+                max_steps = int(np.ceil(steps_per_epoch * args.num_train_epochs))
+                epoch_update_steps = steps_per_epoch
         else:
             # Dynamic mixing: calculate max_steps based on update_times
-            if self.finetuning_args.update_times < 0:
-                # update_times=-1 means update until training finishes
-                # Calculate total steps from num_train_epochs
-                if self.finetuning_args.train_step > 0:
-                    max_steps = self.finetuning_args.train_step
-                    logger.info(f"[Dataflex] Dynamic mix: using train_step={max_steps}")
-                else:
-                    original_dataset_size = sum(len(dataset) for dataset in self.mixture_manager.sources.values())
-                    steps_per_epoch = max(1, original_dataset_size // total_train_batch_size)
-                    max_steps = int(steps_per_epoch * args.num_train_epochs)
-                    logger.info(f"[Dataflex] Dynamic mix: calculated max_steps={max_steps} from num_train_epochs={args.num_train_epochs}")
+            dynamic_epoch_update_steps = None
+            if self.finetuning_args.update_times > 0:
+                dynamic_epoch_update_steps = max(
+                    1,
+                    self.finetuning_args.warmup_step + self.finetuning_args.update_step * self.finetuning_args.update_times,
+                )
+            if self.finetuning_args.train_step > 0:
+                max_steps = self.finetuning_args.train_step
+                epoch_update_steps = dynamic_epoch_update_steps
+                logger.info(f"[Dataflex] Dynamic mix: using train_step={max_steps}")
+            elif dynamic_epoch_update_steps is not None:
+                max_steps = int(np.ceil(args.num_train_epochs * dynamic_epoch_update_steps))
+                epoch_update_steps = dynamic_epoch_update_steps
+                logger.info(f"[Dataflex] Dynamic mix: calculated max_steps={max_steps} from num_train_epochs={args.num_train_epochs}")
             else:
-                # Fixed number of updates
-                max_steps = (self.finetuning_args.warmup_step + self.finetuning_args.update_step * self.finetuning_args.update_times)
-                logger.info(f"[Dataflex] Dynamic mix: max_steps={max_steps} (warmup={self.finetuning_args.warmup_step} + update_step={self.finetuning_args.update_step} * update_times={self.finetuning_args.update_times})")
+                original_dataset_size = sum(len(dataset) for dataset in self.mixture_manager.sources.values())
+                steps_per_epoch = max(1, int(np.ceil(original_dataset_size / total_train_batch_size)))
+                max_steps = int(np.ceil(steps_per_epoch * args.num_train_epochs))
+                epoch_update_steps = steps_per_epoch
+                logger.info(f"[Dataflex] Dynamic mix: calculated max_steps={max_steps} from num_train_epochs={args.num_train_epochs}")
         epoch_based = False
         logger.info(f"[Dataflex]Set max train steps to {max_steps}")
         logger.info(f"[Dataflex]Set epoch_based = False")
@@ -758,7 +766,6 @@ class MixTrainer(CustomSeq2SeqTrainer):
         if args.eval_on_start:
             self._evaluate(trial, ignore_keys_for_eval, skip_scheduler=True)
   
-        # 放弃epoch逻辑，相当于只训练一个epoch，通过step来训练
         current_dataloader = train_dataloader
         epoch = 0
         if self.finetuning_args.static_mix == False and self.state.global_step < self.finetuning_args.warmup_step:
@@ -770,7 +777,11 @@ class MixTrainer(CustomSeq2SeqTrainer):
         if args.past_index >= 0:
             self._past = None
 
-        steps_in_epoch = max_steps * args.gradient_accumulation_steps
+        total_training_batches = max_steps * args.gradient_accumulation_steps
+        if epoch_update_steps is not None:
+            steps_in_epoch = epoch_update_steps * args.gradient_accumulation_steps
+        else:
+            steps_in_epoch = len_dataloader if len_dataloader is not None else total_training_batches
         self.control = self.callback_handler.on_epoch_begin(args, self.state, self.control)
 
         if resume_from_checkpoint is not None and steps_trained_in_current_epoch == 0:
@@ -792,7 +803,7 @@ class MixTrainer(CustomSeq2SeqTrainer):
             remainder = args.gradient_accumulation_steps
         update_step = -1
         # 一个epoch中的模型总更新次数
-        total_updates = steps_in_epoch // args.gradient_accumulation_steps + 1
+        total_updates = total_training_batches // args.gradient_accumulation_steps + 1
         if args.gradient_accumulation_steps == 1:
             total_updates -= 1
         for _ in range(total_updates):
@@ -801,12 +812,22 @@ class MixTrainer(CustomSeq2SeqTrainer):
             num_batches = args.gradient_accumulation_steps if update_step != (total_updates - 1) else remainder
 
             batch_samples, num_items_in_batch = self.get_batch_samples(current_iterator, num_batches, args.device)
+            if len(batch_samples) == 0:
+                epoch += 1
+                if hasattr(current_dataloader, "set_epoch"):
+                    current_dataloader.set_epoch(epoch)
+                current_iterator = iter(current_dataloader)
+                batch_samples, num_items_in_batch = self.get_batch_samples(current_iterator, num_batches, args.device)
+                if len(batch_samples) == 0:
+                    self.control.should_training_stop = True
+                    break
             # 遍历当前批次的样本
             for i, inputs in enumerate(batch_samples):
                 step += 1  # 每次迭代时增加全局步数
 
                 # 判断是否达到同步步数，或者是当前epoch的最后一个步数
-                do_sync_step = (step + 1) % args.gradient_accumulation_steps == 0 or (step + 1) == steps_in_epoch
+                is_epoch_end = (step + 1 + steps_skipped) % steps_in_epoch == 0
+                do_sync_step = (step + 1) % args.gradient_accumulation_steps == 0 or is_epoch_end
                 
                 # 由于我们使用了预取（prefetching），我们需要手动设置同步梯度
                 self.accelerator.gradient_state._set_sync_gradients(do_sync_step)
@@ -954,20 +975,33 @@ class MixTrainer(CustomSeq2SeqTrainer):
                         # learning_rate=learning_rate,
                     )
 
-                    # 动态训练更新
+                    step_in_epoch = (
+                        self.state.global_step % epoch_update_steps
+                        if epoch_update_steps is not None
+                        else self.state.global_step
+                    )
                     if (
+                        self.finetuning_args.static_mix == False
+                        and step_in_epoch == 0
+                        and epoch_update_steps is not None
+                        and self.state.global_step < max_steps
+                    ):
+                        self.train_dataset = self.mixture_manager.rebuild(num_samples = total_train_batch_size * self.finetuning_args.warmup_step)
+                        current_dataloader = self.get_train_dataloader()
+                        current_iterator = iter(current_dataloader)
+                    elif (
                         self.finetuning_args.static_mix == False and(
                         self.state.global_step < max_steps and (
-                        self.state.global_step == self.finetuning_args.warmup_step or
-                        (self.state.global_step > self.finetuning_args.warmup_step and
-                        (self.state.global_step - self.finetuning_args.warmup_step) % self.finetuning_args.update_step == 0)))
+                        step_in_epoch == self.finetuning_args.warmup_step or
+                        (step_in_epoch > self.finetuning_args.warmup_step and
+                        (step_in_epoch - self.finetuning_args.warmup_step) % self.finetuning_args.update_step == 0)))
                     ):
                         self.accelerator.wait_for_everyone()
                         torch.cuda.empty_cache()
                         if dist.is_initialized():
                             dist.barrier()
 
-                        update_times = (self.state.global_step - self.finetuning_args.warmup_step) // self.finetuning_args.update_step + 1
+                        update_times = (step_in_epoch - self.finetuning_args.warmup_step) // self.finetuning_args.update_step + 1
                         logger.info(f"[Dataflex] Model training paused, starting the {update_times}th dynamic data mixture...")
 
                         # Pass current training batch to mixer for λ_t computation
@@ -987,8 +1021,8 @@ class MixTrainer(CustomSeq2SeqTrainer):
 
                         self.mixture_manager.set_proportions(probs)
                         self.train_dataset = self.mixture_manager.rebuild(num_samples = total_train_batch_size * self.finetuning_args.update_step)
-                        train_loader = self.get_train_dataloader()
-                        current_iterator = iter(train_loader)
+                        current_dataloader = self.get_train_dataloader()
+                        current_iterator = iter(current_dataloader)
 
                         if self.accelerator.is_main_process:
                             logger.info(f"[Dataflex] Updated dataloader at step {self.state.global_step}, new mixture proportions generated.")

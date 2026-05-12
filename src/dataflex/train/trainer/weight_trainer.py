@@ -306,7 +306,9 @@ class WeightTrainer(CustomSeq2SeqTrainer):
             len_dataloader, # 等于数据集长度/worldsize/micro_batchsize
             max_steps,
         ) = self.set_initial_training_values(args, train_dataloader, total_train_batch_size)
-        max_steps = self.finetuning_args.train_step
+        # Issue #49: support num_train_epochs while keeping dynamic-step training
+        if self.finetuning_args.train_step > 0:
+            max_steps = self.finetuning_args.train_step
         epoch_based = False
         logger.info(f"[Dataflex]Set max train steps to {max_steps}")
         logger.info(f"[Dataflex]Set epoch_based = False")
@@ -493,7 +495,7 @@ class WeightTrainer(CustomSeq2SeqTrainer):
         if args.eval_on_start:
             self._evaluate(trial, ignore_keys_for_eval, skip_scheduler=True)
 
-        # 放弃epoch逻辑，相当于只训练一个epoch，通过step来训练
+        current_dataloader = train_dataloader
         epoch = 0
         if self.state.global_step < self.finetuning_args.warmup_step:
             logger.info("[Dataflex] Model warmup in progress...")
@@ -503,7 +505,8 @@ class WeightTrainer(CustomSeq2SeqTrainer):
         if args.past_index >= 0:
             self._past = None
 
-        steps_in_epoch = max_steps * args.gradient_accumulation_steps
+        total_training_batches = max_steps * args.gradient_accumulation_steps
+        steps_in_epoch = len_dataloader if len_dataloader is not None else total_training_batches
         self.control = self.callback_handler.on_epoch_begin(args, self.state, self.control)
 
         if resume_from_checkpoint is not None and steps_trained_in_current_epoch == 0:
@@ -512,20 +515,20 @@ class WeightTrainer(CustomSeq2SeqTrainer):
         rng_to_sync = False
         steps_skipped = 0
         if steps_trained_in_current_epoch > 0:
-            train_dataloader = skip_first_batches(train_dataloader, steps_trained_in_current_epoch)
+            current_dataloader = skip_first_batches(current_dataloader, steps_trained_in_current_epoch)
             steps_skipped = steps_trained_in_current_epoch
             steps_trained_in_current_epoch = 0
             rng_to_sync = True
 
         step = -1
-        current_iterator = iter(train_dataloader)
+        current_iterator = iter(current_dataloader)
         # We chunkify the epoch iterator into gradient accumulation steps `n` batches
         remainder = num_examples % args.gradient_accumulation_steps
         if remainder == 0:
             remainder = args.gradient_accumulation_steps
         update_step = -1
         # 一个epoch中的模型总更新次数
-        total_updates = steps_in_epoch // args.gradient_accumulation_steps + 1
+        total_updates = total_training_batches // args.gradient_accumulation_steps + 1
         if args.gradient_accumulation_steps == 1:
             total_updates -= 1
         for _ in range(total_updates):
@@ -534,12 +537,22 @@ class WeightTrainer(CustomSeq2SeqTrainer):
             num_batches = args.gradient_accumulation_steps if update_step != (total_updates - 1) else remainder
 
             batch_samples, num_items_in_batch = self.get_batch_samples(current_iterator, num_batches, args.device)
+            if len(batch_samples) == 0:
+                epoch += 1
+                if hasattr(current_dataloader, "set_epoch"):
+                    current_dataloader.set_epoch(epoch)
+                current_iterator = iter(current_dataloader)
+                batch_samples, num_items_in_batch = self.get_batch_samples(current_iterator, num_batches, args.device)
+                if len(batch_samples) == 0:
+                    self.control.should_training_stop = True
+                    break
             # 遍历当前批次的样本
             for i, inputs in enumerate(batch_samples):
                 step += 1  # 每次迭代时增加全局步数
 
                 # 判断是否达到同步步数，或者是当前epoch的最后一个步数
-                do_sync_step = (step + 1) % args.gradient_accumulation_steps == 0 or (step + 1) == steps_in_epoch
+                is_epoch_end = (step + 1 + steps_skipped) % steps_in_epoch == 0
+                do_sync_step = (step + 1) % args.gradient_accumulation_steps == 0 or is_epoch_end
                 
                 # 由于我们使用了预取（prefetching），我们需要手动设置同步梯度
                 self.accelerator.gradient_state._set_sync_gradients(do_sync_step)

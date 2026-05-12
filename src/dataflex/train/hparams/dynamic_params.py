@@ -547,7 +547,7 @@ class DynamicFinetuningArguments(
     )
     update_times: int = field(
         default=1,
-        metadata={"help": "Total update times during the whole dynamic training progress for dynamic select or mix training"},
+        metadata={"help": "Update times per Flex epoch for dynamic select or mix training. Use <= 0 for no fixed update count."},
     )
     static_mix: bool = field(
         default=False,
@@ -555,7 +555,7 @@ class DynamicFinetuningArguments(
     )
     train_step: int = field(
         default=0,
-        metadata={"help": "Only used in dynamic weight trainer and mix trainer (static_mix=True). Total training steps (including warmup)."},
+        metadata={"help": "Optional total training steps. If set, overrides num_train_epochs."},
     )
     freeze_gate: bool = field(
         default=False,
