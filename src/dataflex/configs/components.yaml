@@ -40,6 +40,27 @@ selectors:
       seed: 123
       save_interval: 16
 
+  cluster_less:
+    name: cluster_less
+    params:
+      cache_dir: ../dataflex_saves/cluster_less_output
+      gradient_type: adam
+      proj_dim: 4096
+      seed: 123
+      save_interval: 16
+      cluster_size: 64
+      samples_per_cluster: 3
+      clustering_batch_size: 8
+      clustering_max_iter: 10
+      assignment_chunk_size: 4096
+      clustering_method: kmeans
+      representative_strategy: random
+      cluster_update_interval: 1
+      embedding_model_name_or_path: null
+      embedding_model_cache_dir: null
+      embedding_model_dtype: auto
+      embedding_model_local_files_only: false
+
   loss:
     name: loss
     params:
