@@ -59,4 +59,4 @@ train_type: dynamic_weight   # 选择训练器类型。可选值包括：
 components_cfg_file: src/dataflex/configs/components.yaml
 component_name: custom  # 选择组件名称，对应 components_cfg_file 中定义的组件
 warmup_step: 1
-train_step: 3 # 总训练步数（包括warm_up） 
+train_step: 3 # Total steps; overrides num_train_epochs

@@ -57,7 +57,7 @@ components_cfg_file: src/dataflex/configs/components.yaml
 component_name: random  # 选择组件名称，对应 components_cfg_file 中定义的组件
 warmup_step: 10
 update_step: 10
-update_times: 2
+update_times: 2  # Updates per Flex epoch; repeats by num_train_epochs
 
 ## eval
 # val_size: 0.001
