@@ -59,9 +59,39 @@ A DataFlex training config is a standard LlamaFactory YAML with additional DataF
 | `component_name` | str | Which algorithm to use, matching a key in `components_cfg_file` |
 | `warmup_step` | int | Number of warmup steps before dynamic behavior kicks in |
 | `update_step` | int | Interval (in steps) between dynamic updates |
-| `update_times` | int | Total number of dynamic updates. Use `-1` for continuous updates until training ends |
+| `update_times` | int | For `dynamic_select`, number of dynamic updates per Flex epoch. Use `-1` for dataset-sized epochs with continuous updates |
 | `static_mix` | bool | If `true` with `dynamic_mix`, use fixed proportions (no dynamic updates). Used in DoReMi Step 1 & 3 |
-| `train_step` | int | Total training steps. Required for `dynamic_weight` and `dynamic_mix` with `static_mix: true` |
+| `train_step` | int | Optional total training steps. If set to a positive value, it overrides `num_train_epochs`-derived steps |
+
+### Step and Epoch Semantics
+
+DataFlex dynamic trainers run a step-based training loop internally. Prefer `eval_strategy: "steps"` / `save_strategy: "steps"` or disable them with `"no"` when using dynamic training. Epoch-based evaluation or saving depends on the internal step-to-epoch bookkeeping and may not align with Flex epoch boundaries.
+
+For `dynamic_select`, `num_train_epochs` repeats Flex epochs. One Flex epoch contains:
+
+```text
+warmup_step + update_step * update_times
+```
+
+For example:
+
+```yaml
+warmup_step: 10
+update_step: 10
+update_times: 2
+num_train_epochs: 3
+```
+
+This runs `3 * (10 + 10 * 2) = 90` optimization steps. To keep the old single-Flex-epoch behavior, set:
+
+```yaml
+num_train_epochs: 1.0
+```
+
+If `train_step > 0`, DataFlex uses `train_step` as the exact total number of optimization steps and does not derive total steps from `num_train_epochs`.
+For multi-epoch tests, make sure example configs do not leave a positive `train_step`; pass `train_step=0` on the CLI if you want `num_train_epochs` to control training length.
+
+For `dynamic_weight`, `warmup_step` is a global step threshold. Reweighting starts when `global_step >= warmup_step` and does not reset at epoch boundaries.
 
 ### Data Mixture Fields (for `dynamic_mix` only)
 
@@ -83,12 +113,14 @@ component_name: less       # choices: less, nice, loss, delta_loss, tsds, near, 
 warmup_step: 10
 update_step: 10
 update_times: 2
+num_train_epochs: 1.0
 ```
 
 **How it works:**
 1. Warmup phase: train on randomly sampled data for `warmup_step` steps.
 2. At `warmup_step` and every `update_step` steps: pause training, run the selector to pick new samples, rebuild the dataloader.
-3. Total steps = `warmup_step + update_step * update_times`.
+3. One Flex epoch has `warmup_step + update_step * update_times` steps.
+4. Total steps are derived from `num_train_epochs` unless `train_step > 0`.
 
 **Example:**
 ```bash
@@ -138,13 +170,14 @@ train_type: dynamic_weight
 components_cfg_file: src/dataflex/configs/components.yaml
 component_name: loss       # choices: loss, custom
 warmup_step: 100
-train_step: 500
+train_step: 500            # fixed-step example; set to 0 for num_train_epochs-based multi-epoch runs
 ```
 
 **How it works:**
 1. Standard training for `warmup_step` steps (no reweighting).
 2. After warmup: each training step computes per-sample losses and applies the weighting strategy.
-3. Total steps = `train_step`.
+3. `warmup_step` is measured in global optimization steps and does not reset per epoch.
+4. If `train_step > 0`, total steps = `train_step`; otherwise total steps follow the standard `num_train_epochs` calculation.
 
 **Example:**
 ```bash
