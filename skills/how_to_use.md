@@ -89,6 +89,7 @@ num_train_epochs: 1.0
 ```
 
 If `train_step > 0`, DataFlex uses `train_step` as the exact total number of optimization steps and does not derive total steps from `num_train_epochs`.
+For multi-epoch tests, make sure example configs do not leave a positive `train_step`; pass `train_step=0` on the CLI if you want `num_train_epochs` to control training length.
 
 For `dynamic_weight`, `warmup_step` is a global step threshold. Reweighting starts when `global_step >= warmup_step` and does not reset at epoch boundaries.
 
@@ -169,7 +170,7 @@ train_type: dynamic_weight
 components_cfg_file: src/dataflex/configs/components.yaml
 component_name: loss       # choices: loss, custom
 warmup_step: 100
-train_step: 500
+train_step: 500            # fixed-step example; set to 0 for num_train_epochs-based multi-epoch runs
 ```
 
 **How it works:**
