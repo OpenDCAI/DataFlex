@@ -1,0 +1,50 @@
+### model
+model_name_or_path: /path/to/LLaMA-MoE-v1-3_5B-2_8
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: full
+deepspeed: examples/deepspeed/ds_z3_config.json
+flash_attn: fa2
+
+### dataset
+dataset: code,math,sharegpt,orca
+template: llama2
+cutoff_len: 2048
+overwrite_cache: true
+preprocessing_num_workers: 128
+dataloader_num_workers: 0
+mixer_eval_dataset: code_eval,math_eval,sharegpt_eval,orca_eval
+
+### output
+output_dir: ../dataflex_saves/LLaMA-MoE-v1-3_5B-2_8/dynamic_moe_sft_mixer
+logging_steps: 10
+save_steps: 1000
+plot_loss: true
+overwrite_output_dir: true
+
+# Official Settings: freeze the gate parameters, 2K steps under a global batch size of 128
+per_device_train_batch_size: 8
+gradient_accumulation_steps: 2
+learning_rate: 2.0e-5
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+bf16: true
+
+### dynamic_train (DataFlex Core Configuration)
+train_type: dynamic_mix
+components_cfg_file: src/dataflex/configs/components.yaml
+component_name: dynamic_moe
+mixture_sample_rule: mixture
+# Disable static mixing, enable dynamic updating
+static_mix: false
+warmup_step: 60
+update_step: 100 # evaluation interval m = 100
+update_times: -1
+train_step: 2000
+max_steps: 2000
+
+freeze_gate: true
