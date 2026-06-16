@@ -145,6 +145,14 @@ weighters:
       strategy: linupper # choices: [linupper, uniform, quadratic, extremes]
       delta: 1.0
   
+  adapt:
+    name: adapt
+    params:
+      tau: 1.0              # 温度，越小权重区分越锐利
+      refresh_interval: 50  # 每多少步用当前模型刷新一次 anchor 向量
+      anchor_batch_size: 8  # 计算句向量时的前向 batch 大小
+      clip: null            # 可选权重上限，防梯度爆炸
+
   custom:
     name: custom
     params:
