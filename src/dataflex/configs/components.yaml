@@ -40,6 +40,28 @@ selectors:
       seed: 123
       save_interval: 16
 
+  cluster_less:
+    name: cluster_less
+    params:
+      cache_dir: ../dataflex_saves/cluster_less_output
+      gradient_type: adam
+      proj_dim: 4096
+      seed: 42
+      save_interval: 16
+      cluster_size: 64
+      samples_per_cluster: 4
+      clustering_batch_size: 8
+      clustering_max_iter: 10
+      clustering_method: kmeans
+      representative_strategy: random
+      # Optional: standalone model for the ONE-TIME clustering embeddings.
+      # When set, clustering is done once with this model and frozen for the
+      # whole run; the training model is only used for the per-step gradient
+      # refresh. Leave null to use the training model (legacy behaviour).
+      embedding_model_name_or_path: null
+      embedding_model_dtype: auto
+      embedding_layer: -1
+
   loss:
     name: loss
     params:
