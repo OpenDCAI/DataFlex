@@ -168,7 +168,7 @@ Dynamically adjusts per-sample loss weights during backpropagation based on samp
 ```yaml
 train_type: dynamic_weight
 components_cfg_file: src/dataflex/configs/components.yaml
-component_name: loss       # choices: loss, custom
+component_name: loss       # choices: loss, adapt, custom
 warmup_step: 100
 train_step: 500            # fixed-step example; set to 0 for num_train_epochs-based multi-epoch runs
 ```
@@ -179,9 +179,12 @@ train_step: 500            # fixed-step example; set to 0 for num_train_epochs-b
 3. `warmup_step` is measured in global optimization steps and does not reset per epoch.
 4. If `train_step > 0`, total steps = `train_step`; otherwise total steps follow the standard `num_train_epochs` calculation.
 
+> `adapt` scores each sample by the cosine similarity between its representation and an anchor set, so it requires an `eval_dataset` field (the anchor/validation set you provide).
+
 **Example:**
 ```bash
 dataflex-cli train examples/train_lora/weighters/loss.yaml
+dataflex-cli train examples/train_lora/weighters/adapt.yaml
 ```
 
 ## Component Configuration (`components.yaml`)
@@ -240,6 +243,7 @@ You select which algorithm to use via `component_name` in your training YAML.
 | Algorithm | `component_name` | Category | Description |
 |-----------|-----------------|----------|-------------|
 | Loss Reweighting | `loss` | Loss-based | Strategies: `linupper`, `uniform`, `quadratic`, `extremes` |
+| ADAPT | `adapt` | Similarity-based | Online per-sample weights from embedding similarity to an anchor set (requires `eval_dataset`) |
 | Custom | `custom` | Custom | Template for user-defined weighting logic |
 
 ## Offline Preprocessing
@@ -295,7 +299,7 @@ examples/
 ├── train_lora/
 │   ├── selectors/     # LESS, NICE, Loss, Delta Loss, TSDS, NEAR, Random, Custom
 │   ├── mixers/        # DoReMi Step 2 (LoRA), Random
-│   └── weighters/     # Loss, Custom
+│   └── weighters/     # Loss, ADAPT, Custom
 ├── train_full/
 │   └── mixers/        # DoReMi Steps 1-3 (full), ODM (full)
 ├── test/              # minimal smoke-test configs
