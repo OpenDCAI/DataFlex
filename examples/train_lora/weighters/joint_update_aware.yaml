@@ -46,3 +46,4 @@ train_type: dynamic_weight
 components_cfg_file: src/dataflex/configs/components.yaml
 component_name: joint_update_aware
 warmup_step: 100
+train_step: 500 # Total steps; overrides num_train_epochs

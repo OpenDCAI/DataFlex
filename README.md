@@ -77,6 +77,7 @@ We summarize repositories related to Data Selection, Data Mixture, and Data Rewe
 | Method | Category | Requires Model-in-the-Loop? | Official Repo |
 |:------:|:--------:|:---------------------------:|:-------------:|
 | **Loss Reweighting** | Loss-Based | ✅ Yes | ❌ |
+| **Joint-Update-Aware Reweighting** | Batch-Aware | ✅ Yes | ❌ |
 
 </div>
 

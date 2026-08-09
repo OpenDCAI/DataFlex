@@ -168,7 +168,7 @@ Dynamically adjusts per-sample loss weights during backpropagation based on samp
 ```yaml
 train_type: dynamic_weight
 components_cfg_file: src/dataflex/configs/components.yaml
-component_name: loss       # choices: loss, adapt, custom
+component_name: loss       # choices: loss, adapt, joint_update_aware, custom
 warmup_step: 100
 train_step: 500            # fixed-step example; set to 0 for num_train_epochs-based multi-epoch runs
 ```
@@ -181,10 +181,13 @@ train_step: 500            # fixed-step example; set to 0 for num_train_epochs-b
 
 > `adapt` scores each sample by the cosine similarity between its representation and an anchor set, so it requires an `eval_dataset` field (the anchor/validation set you provide).
 
+> `joint_update_aware` also requires an `eval_dataset`. Unlike the pointwise methods above, it solves for weights over the **whole global batch** (gathered across ranks), so a sample's weight depends on what the rest of the batch already covers. Interaction strength is controlled by `beta`; setting `beta: 0` (or `objective_mode: align_only`) reduces it to pointwise alignment.
+
 **Example:**
 ```bash
 dataflex-cli train examples/train_lora/weighters/loss.yaml
 dataflex-cli train examples/train_lora/weighters/adapt.yaml
+dataflex-cli train examples/train_lora/weighters/joint_update_aware.yaml
 ```
 
 ## Component Configuration (`components.yaml`)
@@ -244,6 +247,7 @@ You select which algorithm to use via `component_name` in your training YAML.
 |-----------|-----------------|----------|-------------|
 | Loss Reweighting | `loss` | Loss-based | Strategies: `linupper`, `uniform`, `quadratic`, `extremes` |
 | ADAPT | `adapt` | Similarity-based | Online per-sample weights from embedding similarity to an anchor set (requires `eval_dataset`) |
+| Joint-Update-Aware | `joint_update_aware` | Batch-aware | Entropy-regularized weights over the global batch; discounts samples already represented by the weighted batch (requires `eval_dataset`) |
 | Custom | `custom` | Custom | Template for user-defined weighting logic |
 
 ## Offline Preprocessing
@@ -299,7 +303,7 @@ examples/
 ├── train_lora/
 │   ├── selectors/     # LESS, NICE, Loss, Delta Loss, TSDS, NEAR, Random, Custom
 │   ├── mixers/        # DoReMi Step 2 (LoRA), Random
-│   └── weighters/     # Loss, ADAPT, Custom
+│   └── weighters/     # Loss, ADAPT, Joint-Update-Aware, Custom
 ├── train_full/
 │   └── mixers/        # DoReMi Steps 1-3 (full), ODM (full)
 ├── test/              # minimal smoke-test configs

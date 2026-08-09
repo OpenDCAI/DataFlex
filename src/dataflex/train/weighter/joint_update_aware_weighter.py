@@ -35,11 +35,11 @@ class JointUpdateAwareWeighter(Weighter):
         damping: float = 1.0,              # 阻尼系数 rho ∈ (0, 1]，1.0 表示不阻尼
         target_update_step: int = 50,      # 每多少步刷新一次 eval 目标向量
         target_batch_size: int = 1,        # 计算目标向量时的前向 batch 大小
+        target_num_batches: int = 1,       # 每次刷新平均多少个 eval batch，<=0 表示遍历整个 eval 集
         embed_normalize: bool = True,      # 是否对 embedding 做 L2 归一化
         pooling: str = "last_token",       # 句向量池化方式：last_token / mean_pool
         embed_layer: int = -1,             # 取哪一层 hidden state，-1 为最后一层
         objective_mode: str = "full",      # full / align_only / diverse_only / uniform
-        seed: int = 42,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -54,11 +54,11 @@ class JointUpdateAwareWeighter(Weighter):
         self.damping = float(damping)
         self.target_update_step = max(1, int(target_update_step))
         self.target_batch_size = max(1, int(target_batch_size))
+        self.target_num_batches = int(target_num_batches)
         self.embed_normalize = bool(embed_normalize)
         self.pooling = str(pooling)
         self.embed_layer = int(embed_layer)
         self.objective_mode = str(objective_mode)
-        self.seed = int(seed)
 
         allowed_modes = {"full", "align_only", "diverse_only", "uniform"}
         if self.objective_mode not in allowed_modes:
@@ -150,8 +150,10 @@ class JointUpdateAwareWeighter(Weighter):
             for key, value in inputs.items()
         }
 
+        # 取 embedding 只是为了构造 S 与 s，必须走 eval 模式：train 模式会打开 dropout，
+        # 让同一批样本的余弦 Gram 矩阵带上随机噪声。与 _compute_eval_target 保持一致。
         was_training = model.training
-        model.train()
+        model.eval()
         try:
             with torch.no_grad():
                 outputs = model(
@@ -160,8 +162,8 @@ class JointUpdateAwareWeighter(Weighter):
                     output_hidden_states=True,
                 )
         finally:
-            if not was_training:
-                model.eval()
+            if was_training:
+                model.train()
 
         layer_hidden = outputs.hidden_states[self.embed_layer]  # (B, T, D)
         embeddings = self._pool_hidden_states(layer_hidden, batch.get("attention_mask"), batch.get("labels"))
@@ -225,33 +227,61 @@ class JointUpdateAwareWeighter(Weighter):
             self._eval_iter = iter(loader)
             return next(self._eval_iter)
 
+    def _embed_eval_batch(self, ctx, model: nn.Module, batch, device):
+        """对单个 eval batch 前向取句向量，返回 (sum_of_embeddings, num_samples)。"""
+        if ctx is not None and hasattr(ctx, "_prepare_inputs"):
+            batch = ctx._prepare_inputs(batch)
+        else:
+            batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
+
+        with torch.no_grad():
+            outputs = model(
+                **{k: v for k, v in batch.items() if k != "labels"},
+                labels=batch.get("labels"),
+                output_hidden_states=True,
+            )
+
+        layer_hidden = outputs.hidden_states[self.embed_layer]
+        embeddings = self._pool_hidden_states(layer_hidden, batch.get("attention_mask"), batch.get("labels"))
+        embeddings = embeddings.detach().float()
+        return embeddings.sum(dim=0), embeddings.size(0)
+
     def _compute_eval_target(self, ctx, model: nn.Module, device):
-        """计算 anchor/eval 集的平均句向量 u，作为对齐方向。"""
+        """计算 anchor/eval 集的平均句向量 u，作为对齐方向。
+
+        每次刷新平均 ``target_num_batches`` 个 eval batch；设为 <=0 时遍历整个 eval 集。
+        默认只取 1 个 batch，因此 u 的方差较大——若 eval 集较小，建议把
+        ``target_num_batches`` 设为 0 以使用全集均值。
+        """
         if self.eval_dataset is None or self.data_collator is None:
             return None
 
-        batch = self._next_eval_batch()
-        if batch is None:
+        loader = self._get_eval_loader()
+        if loader is None:
             return None
+
+        if self.target_num_batches <= 0:
+            num_batches = len(loader)
+            # 遍历全集时从头开始，保证每次刷新覆盖同一批 anchor 样本
+            self._eval_iter = iter(loader)
+        else:
+            num_batches = self.target_num_batches
 
         was_training = model.training
         model.eval()
         try:
-            if ctx is not None and hasattr(ctx, "_prepare_inputs"):
-                batch = ctx._prepare_inputs(batch)
-            else:
-                batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
-
-            with torch.no_grad():
-                outputs = model(
-                    **{k: v for k, v in batch.items() if k != "labels"},
-                    labels=batch.get("labels"),
-                    output_hidden_states=True,
-                )
-
-            layer_hidden = outputs.hidden_states[self.embed_layer]
-            embeddings = self._pool_hidden_states(layer_hidden, batch.get("attention_mask"), batch.get("labels"))
-            target = embeddings.detach().float().mean(dim=0)  # (D,)
+            total = None
+            count = 0
+            for _ in range(max(1, num_batches)):
+                batch = self._next_eval_batch()
+                if batch is None:
+                    break
+                batch_sum, batch_n = self._embed_eval_batch(ctx, model, batch, device)
+                total = batch_sum if total is None else total + batch_sum
+                count += batch_n
+            if total is None or count == 0:
+                return None
+            target = total / count  # (D,) 按样本数加权的真实均值
         finally:
             if was_training:
                 model.train()

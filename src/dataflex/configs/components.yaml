@@ -186,11 +186,11 @@ weighters:
       damping: 1.0            # 阻尼系数 rho ∈ (0, 1]，1.0 表示不阻尼
       target_update_step: 50  # 每多少步用 eval 集刷新一次目标向量
       target_batch_size: 1    # 计算目标向量时的前向 batch 大小
+      target_num_batches: 1   # 每次刷新平均多少个 eval batch；设为 0 表示遍历整个 eval 集
       embed_normalize: true   # 是否对 embedding 做 L2 归一化
       pooling: last_token     # 句向量池化方式：last_token / mean_pool
       embed_layer: -1         # 取哪一层 hidden state，-1 为最后一层
       objective_mode: full    # full / align_only / diverse_only / uniform
-      seed: 42
 
   custom:
     name: custom
