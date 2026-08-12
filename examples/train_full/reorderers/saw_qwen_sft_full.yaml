@@ -1,0 +1,62 @@
+### model
+model_name_or_path: Qwen/Qwen3-1.7B-Base
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: full
+deepspeed: examples/deepspeed/ds_z2_config.json
+
+### dataset
+# 数据集的原始 jsonl 每行必须带一个分数字段（见 components.yaml 里的 score_field）。
+# 论文用的是 FineWeb-Edu 的教育分 / QuRating 分这类"质量分"。
+dataset: alpaca_en_demo
+template: qwen
+cutoff_len: 2048
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+seed: 42
+
+# 顺序相关的约束：
+#   - val_size 必须为 0（train_test_split 会 shuffle，把顺序打乱）；要做验证请用 eval_dataset
+#   - mix_strategy 保持 concat（interleave_* 会重排）
+#   - dataset_info.json 里对应条目的 num_samples 必须不设（它用的是未播种的随机置换）
+val_size: 0
+mix_strategy: concat
+
+# packing 会在 preprocessing_batch_size 的窗口内按长度重组样本，相当于自带一个
+# 该宽度的隐式 JIT。想做干净对比就关掉它。
+packing: false
+
+# 每个排序变体建议用各自的 tokenized_path，避免 HF 缓存串味、也省去重复分词。
+# tokenized_path: ../dataflex_saves/tokenized/alpaca_saw
+
+### output
+output_dir: ../dataflex_saves/Qwen3-1.7B/reorder_saw
+logging_steps: 10
+save_steps: 500
+plot_loss: true
+overwrite_output_dir: true
+report_to: none
+
+### train
+per_device_train_batch_size: 4
+gradient_accumulation_steps: 8
+learning_rate: 2.0e-5
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+
+### Dataflex args
+train_type: dynamic_reorder
+components_cfg_file: src/dataflex/configs/components.yaml
+component_name: saw          # components.yaml 的 reorderers 里的预设名
+                             # 可选：sorting(CL) / shuffle / segment / folding / zigzag / stair / saw
+warmup_step: 10
+update_step: 50
+update_times: 20             # 想跑完整一轮就让 warmup_step + update_step*update_times
+                             # 约等于 len(dataset) / (per_device_bs * grad_accum * world_size)

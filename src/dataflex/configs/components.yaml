@@ -196,3 +196,206 @@ weighters:
     name: custom
     params:
       strategy: uniform
+
+reorderers:
+  # Data reorderers change sample order only; the number of samples is untouched.
+  #
+  # Every reorderer is defined along three axes:
+  #   pattern       : one of seven orderings, covering the four guidances of the paper
+  #                   [shuffle, sorting, folding, zigzag, segment, stair, saw]
+  #   score_source  : where the scores come from [precomputed, cached_selection, model_loss]
+  #   apply_at      : the level the permutation is applied to [raw, index]
+  #                   raw   = permute the raw rows before preprocessing. Required for
+  #                           precomputed scores, because align_dataset drops the score
+  #                           field.
+  #                   index = permute dataset indices block-wise during training. Used
+  #                           for online model scoring.
+  #
+  # polarity states which end of training high-scoring samples belong to:
+  #   higher_later   high scores go last. The default, used both for quality scores
+  #                  (G1: finish on good data) and for loss as difficulty (easy to hard).
+  #   higher_earlier high scores go first. Only needed when the raw metric is inverted,
+  #                  e.g. perplexity used as a quality score (lower is better).
+  # The aliases higher_is_better / lower_is_better are also accepted.
+  #
+  # window_size > 1 is the JIT of the paper (G4) and composes with any pattern.
+
+  # ---------- Static: precomputed quality scores (paper-aligned) ----------
+
+  # CL baseline: ascending by score
+  sorting:
+    name: sorting
+    params:
+      kind: static
+      pattern: sorting
+      apply_at: raw
+      polarity: higher_later
+      ascending: true
+      window_size: 0        # >1 enables JIT; the best value for CL in the paper is 5000
+      seed: 42
+      score_source: precomputed
+      score_params:
+        score_field: score  # field name in the raw jsonl; the paper's repo uses average_test_score
+        # score_path: /path/to/scores.npy   # alternatively load from a file, aligned one-to-one with the raw rows
+
+  # Random baseline. Note that omitting the reorder is not equivalent, because the reorder trainer always samples sequentially.
+  shuffle:
+    name: shuffle
+    params:
+      kind: static
+      pattern: shuffle
+      apply_at: raw
+      seed: 42
+      score_source: precomputed
+      score_params:
+        score_field: score
+
+  # G1 boundary sharpening: low scores at the head, high scores at the tail (SEG(l10-h10) in the paper)
+  segment:
+    name: segment
+    params:
+      kind: static
+      pattern: segment
+      apply_at: raw
+      polarity: higher_later
+      seed: 42
+      pattern_params:
+        x_pct: 10
+        y_pct: 10
+        front_is_high: false
+        back_is_high: true
+      score_source: precomputed
+      score_params:
+        score_field: score
+
+  # G2 periodic review: stratify by i mod L
+  folding:
+    name: folding
+    params:
+      kind: static
+      pattern: folding
+      apply_at: raw
+      polarity: higher_later
+      ascending: true
+      window_size: 0        # the best JIT window for FO in the paper is 50000
+      seed: 42
+      pattern_params:
+        layers: 3           # paper: L=2,3 is best for pretraining, L=3,5 for SFT
+      score_source: precomputed
+      score_params:
+        score_field: score
+
+  # G3 curriculum continuity: FO with odd layers reversed, which removes the gradient spike at cycle boundaries
+  zigzag:
+    name: zigzag
+    params:
+      kind: static
+      pattern: zigzag
+      apply_at: raw
+      polarity: higher_later
+      ascending: true
+      window_size: 0        # the best JIT window for ZIG in the paper is 5000
+      seed: 42
+      pattern_params:
+        layers: 3
+      score_source: precomputed
+      score_params:
+        score_field: score
+
+  # G1+G2+G4: globally monotonic, with folding applied only in the transition zone around each section boundary
+  stair:
+    name: stair
+    params:
+      kind: static
+      pattern: stair
+      apply_at: raw
+      polarity: higher_later
+      ascending: true
+      window_size: 0
+      seed: 42
+      pattern_params:
+        num_sections: 2
+        folding_ratio: 0.225  # fraction of the full dataset; must satisfy 2*ratio < 1/num_sections
+        layers: 3
+      score_source: precomputed
+      score_params:
+        score_field: score
+
+  # G1+G2+G3+G4: same as stair, but the transition zone uses zigzag. SAW-2(JIT) is the best configuration in the scaling experiments of the paper
+  saw:
+    name: saw
+    params:
+      kind: static
+      pattern: saw
+      apply_at: raw
+      polarity: higher_later
+      ascending: true
+      window_size: 0
+      seed: 42
+      pattern_params:
+        num_sections: 3
+        folding_ratio: 0.075
+        layers: 2
+      score_source: precomputed
+      score_params:
+        score_field: score
+
+  # ---------- Dynamic: score with the current model ----------
+
+  # Every update interval, score the remaining samples with the current model and reorder.
+  # Note the semantic: the scores here are loss, representing "how difficult" currently, not "how high the quality". So this is a difficulty course (higher_later = high loss at the tail), not a replication of the paper's numbers - the paper uses quality scores. To align with the paper, please use the static presets above with real quality scores.
+  dynamic_saw:
+    name: dynamic_saw
+    params:
+      kind: dynamic
+      pattern: saw
+      polarity: higher_later
+      ascending: true
+      window_size: 0
+      seed: 42
+      pattern_params:
+        num_sections: 3
+        folding_ratio: 0.075
+        layers: 2
+      score_source: model_loss
+      score_params:
+        batch_size: 8         # LossSelector uses 1, here we score more samples in batch for faster computation
+        num_workers: 2
+        max_samples: 20000    # only score this many samples, to control the forward overhead per round
+      reorder_every: 1        # re-score every k update intervals
+      consume_once: true      # remove the samples sent out to ensure single-round semantic
+
+  dynamic_folding:
+    name: dynamic_folding
+    params:
+      kind: dynamic
+      pattern: folding
+      polarity: higher_later
+      ascending: true
+      seed: 42
+      pattern_params:
+        layers: 3
+      score_source: model_loss
+      score_params:
+        batch_size: 8
+        max_samples: 20000
+      reorder_every: 1
+      consume_once: true
+
+  # Reuse the scores already computed by the selector, no need to run the forward again.
+  # Need to run the selector first to produce cache_dir/step_*.json.
+  reuse_selector_scores:
+    name: reuse_selector_scores
+    params:
+      kind: dynamic
+      pattern: saw
+      polarity: higher_later
+      seed: 42
+      pattern_params:
+        num_sections: 3
+        folding_ratio: 0.075
+        layers: 2
+      score_source: cached_selection
+      score_params:
+        cache_path: ../dataflex_saves/loss_output/step_10.json
+        metric_key: loss
