@@ -6,33 +6,29 @@ flash_attn: fa2
 ### method
 stage: sft
 do_train: true
-finetuning_type: lora
-lora_target: all
-lora_rank: 16
-lora_alpha: 8
+finetuning_type: full
+deepspeed: examples/deepspeed/ds_z3_config.json  # ZeRO-3 for full-param
 
 ### dataset
 dataset: mmfinereason_sft_demo
 template: qwen2_vl
-cutoff_len: 16384  # vision tokens budget.
-# max_samples: 100000000
-overwrite_cache: true
+cutoff_len: 16384
+overwrite_cache: false
 preprocessing_num_workers: 16
 dataloader_num_workers: 0
-# disable_shuffling: true
 seed: 42
 
 ### output
-output_dir: ../dataflex_saves/Qwen2.5-VL-7B/icons
+output_dir: ../dataflex_saves/Qwen25-VL-7B/icons_full
 logging_steps: 10
 save_steps: 50
 plot_loss: true
 save_only_model: false
 overwrite_output_dir: true
 
-### swanlab
-report_to: wandb  # choices: [none, wandb, tensorboard, swanlab, mlflow]
-run_name: qwen25vl7b_icons_lora_123k_3epoch
+### wandb
+report_to: wandb
+run_name: qwen25vl7b_icons_full_123k_3epoch
 
 ### train
 per_device_train_batch_size: 1
@@ -53,14 +49,12 @@ update_step: 1900
 update_times: 2
 
 ## eval
-# eval_dataset is the K task validation sets concatenated in order; set
-# task_boundaries in components.yaml to the size of each task's slice.
 eval_dataset: mmfinereason_eval_demo
 per_device_eval_batch_size: 1
 metric_for_best_model: eval_loss
 greater_is_better: false
 load_best_model_at_end: false
-eval_strategy: steps    # choices: [no, steps, epoch]
+eval_strategy: steps
 eval_steps: 50
 
-# FORCE_TORCHRUN=1 DISABLE_VERSION_CHECK=1 dataflex-cli train examples/train_lora/selectors/icons.yaml
+# FORCE_TORCHRUN=1 DISABLE_VERSION_CHECK=1 dataflex-cli train examples/train_full/selectors/icons_full.yaml

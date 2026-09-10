@@ -72,6 +72,28 @@ selectors:
       embedding_model_dtype: auto
       embedding_layer: -1
 
+  coincide:
+    name: coincide
+    params:
+      cache_dir: ../dataflex_saves/coincide_output
+      seed: 42
+      # Reference LVLM for the ONE-TIME concept-skill embeddings, loaded with
+      # AutoModelForImageTextToText. null = reuse the training model.
+      embedding_model_name_or_path: null
+      embedding_model_dtype: auto          # [auto, fp16, bf16, fp32]
+      # Hidden-state layers to pool. null = M=5 layers evenly spaced first->top;
+      # or an explicit list like [4, 10, 16, 22, 28].
+      embedding_layers: null
+      num_clusters: 10000                  # actual K = min(num_clusters, N)
+      clustering_batch_size: 8
+      clustering_num_workers: 4           # workers per rank for image loading/collation
+      clustering_device: auto             # CUDA when available, otherwise CPU
+      clustering_max_iter: 10
+      assignment_chunk_size: 4096
+      temperature: 1.0                     # tau in exp(S_i / (tau * D_i))
+      density_chunk_size: 2048             # row block bounding O(|Ci|^2) memory
+      single_member_density: 1.0           # D_i assigned to a singleton cluster
+
   loss:
     name: loss
     params:

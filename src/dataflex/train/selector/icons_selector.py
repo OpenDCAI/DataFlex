@@ -26,6 +26,10 @@ class IndexedDataset(Dataset):
         return index, self.original_dataset[index]
 
 
+def _is_zero3(model) -> bool:
+    return any(hasattr(p, 'ds_id') for p in model.parameters())
+
+
 @register_selector("icons")
 class IconsSelector(Selector):
     """
@@ -33,15 +37,14 @@ class IconsSelector(Selector):
 
     ICONS scores every training sample against K task validation sets via
     gradient influence, then aggregates the K per-task rankings by majority
-    voting instead of by comparing raw scores across tasks. It shares the
-    gradient-influence machinery with LESS (projected, normalized gradients;
-    cosine influence) but is a distinct method: the consensus vote, not a
-    single validation target, is what selects the subset.
+    voting. The K tasks are read off a single `eval_dataset` whose rows are
+    the task validation sets concatenated in order.
 
-    The K tasks are read off a single `eval_dataset` whose rows are the task
-    validation sets concatenated in order. `task_boundaries` gives the size of
-    each task's slice (summing to len(eval_dataset)); when it is None the whole
-    eval set is one task and selection degenerates to plain LESS.
+    ZeRO-3: stays on local partitions everywhere (num_params from ds_tensor,
+    gradients from safe_get_local_grad, optimizer states from
+    safe_get_local_optimizer_state). After projection, all_reduce(SUM)
+    reconstructs the full projected gradient since all ranks use the same
+    projector seed.
     """
 
     def __init__(self,
@@ -85,72 +88,107 @@ class IconsSelector(Selector):
             start += size
         return slices
 
-    # ------------------------------------------------------------------
-    # Gradient influence (shared design with LESS)
-    # ------------------------------------------------------------------
+    def _broadcast_bool(self, value: bool) -> bool:
+        """Broadcast a boolean from rank 0 to all ranks to avoid cache-check divergence."""
+        if not (dist.is_available() and dist.is_initialized()):
+            return value
+        obj = [value if self.accelerator.is_main_process else None]
+        dist.broadcast_object_list(obj, src=0)
+        return bool(obj[0])
 
-    def _get_number_of_params(self, model) -> int:
+    def _get_number_of_params(self, model, zero3: bool) -> int:
+        """Per-rank parameter count. ZeRO-3: uses ds_tensor.numel() since p.numel() returns 0 for partitioned params."""
         num_params = 0
         for p in model.parameters():
             if p.requires_grad:
-                # ZeRO-3 partitions params; ds_numel is the full size that
-                # safe_get_full_grad returns, p.numel() is only the local shard.
-                num_params += p.ds_numel if hasattr(p, 'ds_numel') else p.numel()
+                if zero3 and hasattr(p, 'ds_tensor'):
+                    num_params += p.ds_tensor.numel()
+                else:
+                    num_params += p.numel()
         if self.accelerator.is_main_process:
-            logger.info(f"Total number of parameters that require gradients: {num_params}")
+            mode = "ZeRO-3 (per-rank partition)" if zero3 else "full"
+            logger.info(f"Total number of parameters that require gradients ({mode}): {num_params}")
         return num_params
 
-    def _prepare_optimizer_state(self, model, optimizer_state: Optional[Dict] = None):
+    def _prepare_optimizer_state(self, model, optimizer_state: Optional[Dict], zero3: bool):
+        """Collect Adam exp_avg / exp_avg_sq. ZeRO-3: local partition on GPU; non-ZeRO-3: full state on CPU."""
         avg_list, avg_sq_list = [], []
-        if self.accelerator.state.deepspeed_plugin is not None:
-            from deepspeed.utils import safe_get_full_optimizer_state
+        if zero3:
+            from deepspeed.utils import safe_get_local_optimizer_state
+            n_trainable, n_collected = 0, 0
             for param in model.parameters():
                 if param.requires_grad:
-                    exp_avg = safe_get_full_optimizer_state(param, "exp_avg")
-                    exp_avg_sq = safe_get_full_optimizer_state(param, "exp_avg_sq")
+                    n_trainable += 1
+                    exp_avg = safe_get_local_optimizer_state(param, "exp_avg")
+                    exp_avg_sq = safe_get_local_optimizer_state(param, "exp_avg_sq")
                     if exp_avg is not None and exp_avg_sq is not None:
-                        avg_list.append(exp_avg.view(-1))
-                        avg_sq_list.append(exp_avg_sq.view(-1))
+                        avg_list.append(exp_avg.detach().view(-1))
+                        avg_sq_list.append(exp_avg_sq.detach().view(-1))
+                        n_collected += 1
+            if n_collected != n_trainable:
+                raise RuntimeError(
+                    f"[ICONS ZeRO-3] Optimizer state mismatch: {n_collected}/{n_trainable} "
+                    f"trainable parameters have optimizer states. Run at least one training step first."
+                )
         else:
             if optimizer_state is None:
                 raise ValueError("optimizer_state must be provided for non-DeepSpeed 'adam' gradient type.")
             for param in model.parameters():
                 if param.requires_grad:
-                    avg_list.append(optimizer_state[param]["exp_avg"].view(-1))
-                    avg_sq_list.append(optimizer_state[param]["exp_avg_sq"].view(-1))
-        avg = torch.cat(avg_list).to(self.device)
-        avg_sq = torch.cat(avg_sq_list).to(self.device)
-        return avg, avg_sq
+                    avg_list.append(optimizer_state[param]["exp_avg"].detach().view(-1).cpu())
+                    avg_sq_list.append(optimizer_state[param]["exp_avg_sq"].detach().view(-1).cpu())
+        return torch.cat(avg_list), torch.cat(avg_sq_list)
 
-    def _obtain_gradients(self, model, batch, gradient_type, m=None, v=None) -> torch.Tensor:
-        if self.accelerator.state.deepspeed_plugin is not None:
+    def _obtain_gradients(self, model, batch, gradient_type, m, v, zero3: bool) -> Optional[torch.Tensor]:
+        """Per-sample gradient vector. ZeRO-3: safe_get_local_grad (partition); non-ZeRO-3: p.grad (full)."""
+        # Move batch to device (needed for ZeRO-3 since dataloader is not prepared)
+        batch = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+
+        if zero3:
             loss = model(**batch).loss
             model.backward(loss)
-            from deepspeed.utils import safe_get_full_grad
+            from deepspeed.utils import safe_get_local_grad
             grads = []
-            for _, p in model.named_parameters():
-                g = safe_get_full_grad(p)
-                if g is not None:
-                    grads.append(g.contiguous().view(-1))
+            for p in model.parameters():
+                if p.requires_grad:
+                    g = safe_get_local_grad(p)
+                    if g is not None:
+                        grads.append(g.detach().contiguous().view(-1))
             vectorized_grads = torch.cat(grads) if grads else None
         else:
             with self.accelerator.no_sync(model):
                 loss = model(**batch).loss
                 self.accelerator.backward(loss)
-            vectorized_grads = torch.cat(
-                [p.grad.view(-1) for p in model.parameters() if p.grad is not None]
-            )
+            grads_list = [p.grad.view(-1) for p in model.parameters() if p.grad is not None]
+            vectorized_grads = torch.cat(grads_list) if grads_list else None
 
         if gradient_type == "adam":
             if m is None or v is None:
                 raise ValueError("Adam optimizer states (m, v) must be provided for 'adam' gradient type.")
+            if vectorized_grads is None:
+                model.zero_grad()
+                return None
+
             beta1, beta2, eps = 0.9, 0.999, 1e-08
-            denom = v.mul(beta2)
-            denom.addcmul_(vectorized_grads, vectorized_grads, value=(1 - beta2))
-            denom.sqrt_().add_(eps)
-            vectorized_grads.mul_(1 - beta1).add_(m, alpha=beta1)
-            vectorized_grads.div_(denom)
-            del denom
+            if zero3:
+                # In-place Adam correction on GPU (partition is small)
+                denom = v.mul(beta2)
+                denom.addcmul_(vectorized_grads, vectorized_grads, value=(1 - beta2))
+                denom.sqrt_().add_(eps)
+                vectorized_grads.mul_(1 - beta1).add_(m, alpha=beta1)
+                vectorized_grads.div_(denom)
+                del denom
+            else:
+                # Adam correction on CPU (avoid OOM for large models)
+                vectorized_grads = vectorized_grads.cpu()
+                m_cpu, v_cpu = m.cpu(), v.cpu()
+                denom = v_cpu.mul(beta2)
+                denom.addcmul_(vectorized_grads, vectorized_grads, value=(1 - beta2))
+                denom.sqrt_().add_(eps)
+                vectorized_grads.mul_(1 - beta1).add_(m_cpu, alpha=beta1)
+                vectorized_grads.div_(denom)
+                del denom, m_cpu, v_cpu
+                vectorized_grads = vectorized_grads.to(self.device)
         elif gradient_type != "sgd":
             assert False, f"Unknown gradient type: {gradient_type}"
 
@@ -178,12 +216,12 @@ class IconsSelector(Selector):
         files = [f for f in os.listdir(save_dir) if f.startswith("grads") and f.endswith(".pt")]
         if not files:
             return -1
-        # filename: grads-{count}-rank{rank}.pt
         return max(int(f.split('.')[0].split('-')[1]) for f in files)
 
     def _collect_and_save_projected_gradients(self, model, save_dir, dataset_to_use, gradient_type, optimizer_state=None):
-        """Each process projects its shard of per-sample gradients and saves indexed chunks."""
-        num_params = self._get_number_of_params(model)
+        """Project per-sample gradients and save indexed chunks. ZeRO-3: all_reduce(SUM) reconstructs full projection."""
+        zero3 = _is_zero3(model)
+        num_params = self._get_number_of_params(model, zero3)
         projector_class = self._get_trak_projector()
         _, _, ProjectionType = _trak_projectors()
         projector = projector_class(
@@ -191,7 +229,7 @@ class IconsSelector(Selector):
             proj_dim=self.proj_dim,
             seed=self.seed,
             proj_type=ProjectionType.rademacher,
-            max_batch_size=8,
+            max_batch_size=self.save_interval,
             block_size=128,
             device=self.device,
             dtype=self.dtype,
@@ -199,9 +237,9 @@ class IconsSelector(Selector):
 
         m, v = None, None
         if gradient_type == "adam":
-            if self.accelerator.state.deepspeed_plugin is None and optimizer_state is None:
+            if not zero3 and self.accelerator.state.deepspeed_plugin is None and optimizer_state is None:
                 raise ValueError("optimizer_state must be provided for non-DeepSpeed 'adam' gradient type.")
-            m, v = self._prepare_optimizer_state(model, optimizer_state)
+            m, v = self._prepare_optimizer_state(model, optimizer_state, zero3)
 
         indexed_dataset = IndexedDataset(dataset_to_use)
 
@@ -214,7 +252,9 @@ class IconsSelector(Selector):
             indexed_dataset, batch_size=1, shuffle=False, num_workers=2,
             collate_fn=indexed_collator_wrapper,
         )
-        dataloader = self.accelerator.prepare(dataloader)
+        if not zero3:
+            dataloader = self.accelerator.prepare(dataloader)
+        # ZeRO-3: do NOT prepare dataloader — all ranks must see same samples for all_reduce
 
         save_interval = self.save_interval
         start_count = self._get_max_saved_index(save_dir) + 1
@@ -223,8 +263,7 @@ class IconsSelector(Selector):
         self.accelerator.wait_for_everyone()
 
         total_samples_in_loader = len(dataloader)
-        model_device = next(model.parameters()).device
-        grad_buffer = torch.zeros(save_interval, num_params, device=model_device, dtype=self.dtype)
+        grad_buffer = torch.zeros(save_interval, num_params, device=self.device, dtype=torch.float32)
         idx_buffer = torch.zeros(save_interval, dtype=torch.long)
         buf_pos = 0
 
@@ -235,14 +274,29 @@ class IconsSelector(Selector):
             dynamic_ncols=True,
             position=self.accelerator.process_index,
         ), 1):
-            vectorized_grads = self._obtain_gradients(model, data['batch'], gradient_type, m, v)
+            vectorized_grads = self._obtain_gradients(model, data['batch'], gradient_type, m, v, zero3)
+            if vectorized_grads is None:
+                continue
+            if vectorized_grads.numel() != num_params:
+                raise RuntimeError(
+                    f"[ICONS] Gradient dimension mismatch: got {vectorized_grads.numel()} "
+                    f"but expected {num_params}. Some parameters were skipped during gradient collection."
+                )
             grad_buffer[buf_pos].copy_(vectorized_grads)
             del vectorized_grads
             idx_buffer[buf_pos] = data['indices'][0]
             buf_pos += 1
 
             if buf_pos == save_interval or batch_idx == total_samples_in_loader:
-                projected = projector.project(grad_buffer[:buf_pos], model_id=0).cpu()
+                if buf_pos == 0:
+                    continue
+                projected = projector.project(grad_buffer[:buf_pos], model_id=0)
+
+                if zero3 and dist.is_initialized():
+                    dist.barrier()
+                    dist.all_reduce(projected, op=dist.ReduceOp.SUM)
+
+                projected = projected.cpu()
                 save_path = os.path.join(
                     save_dir, f"grads-{idx_buffer[:buf_pos].max().item()}-rank{self.accelerator.process_index}.pt",
                 )
@@ -254,7 +308,7 @@ class IconsSelector(Selector):
         self.accelerator.wait_for_everyone()
 
     def _merge_and_normalize_info(self, save_dir, total_samples):
-        """Main process reorders chunks by original index, then L2-normalizes per row."""
+        """Main process reorders chunks by index, then L2-normalizes per row."""
         if not self.accelerator.is_main_process:
             return
         files = glob.glob(os.path.join(save_dir, "grads-*-rank*.pt"))
@@ -276,14 +330,12 @@ class IconsSelector(Selector):
         for file_path in files:
             os.remove(file_path)
 
-    # ------------------------------------------------------------------
-    # Selection
-    # ------------------------------------------------------------------
-
     def select(self, model, step_id: int, num_samples: int, **kwargs) -> List[int]:
         os.makedirs(self.cache_dir, exist_ok=True)
         save_path = os.path.join(self.cache_dir, f"step_{step_id}.json")
-        if os.path.exists(save_path):
+
+        # Cache check: broadcast from rank 0 to avoid filesystem divergence
+        if self._broadcast_bool(os.path.exists(save_path)):
             if self.accelerator.is_main_process:
                 cached_indices, _ = load_cached_selection(save_path)
             else:
@@ -302,17 +354,16 @@ class IconsSelector(Selector):
         train_final_grads_path = os.path.join(now_train_save_dir, "all_projected_grads.pt")
         eval_final_grads_path = os.path.join(now_eval_save_dir, "all_projected_grads.pt")
 
-        # All K task validation sets are concatenated in eval_dataset, so their
-        # gradients are projected in a single pass; the tasks are split apart
-        # only at scoring time via self.task_slices.
-        if not os.path.exists(train_final_grads_path):
+        # Train gradients
+        if not self._broadcast_bool(os.path.exists(train_final_grads_path)):
             os.makedirs(now_train_save_dir, exist_ok=True)
             optimizer_state = kwargs.get('optimizer_state', None)
             self._collect_and_save_projected_gradients(model, now_train_save_dir, self.dataset, self.gradient_type, optimizer_state)
             self._merge_and_normalize_info(now_train_save_dir, len(self.dataset))
         self.accelerator.wait_for_everyone()
 
-        if not os.path.exists(eval_final_grads_path):
+        # Eval gradients
+        if not self._broadcast_bool(os.path.exists(eval_final_grads_path)):
             os.makedirs(now_eval_save_dir, exist_ok=True)
             self._collect_and_save_projected_gradients(model, now_eval_save_dir, self.eval_dataset, "sgd", None)
             self._merge_and_normalize_info(now_eval_save_dir, len(self.eval_dataset))
@@ -338,20 +389,14 @@ class IconsSelector(Selector):
         return selected_indices
 
     def _vote_select(self, train_grads, eval_grads, num_samples):
-        """Per-task influence -> per-task threshold vote -> top by total votes.
-
-        For each task, a sample votes if its mean influence on that task ranks
-        in the top p = num_samples / N. Voting on the binary "above threshold"
-        signal, not on the raw score, is what removes the need to calibrate
-        influence magnitudes across tasks (paper Eqn. 6, Alg. 2).
-        """
+        """Per-task influence -> per-task threshold vote -> top by total votes."""
         n_train = train_grads.shape[0]
         p = num_samples / n_train
         votes = torch.zeros(n_train, dtype=torch.long)
 
         for sl in self.task_slices:
             task_influence = (train_grads @ eval_grads[sl].T).mean(dim=1)
-            tau = torch.quantile(task_influence, 1.0 - p)  # (1 - p) quantile = top-p cutoff for this task
+            tau = torch.quantile(task_influence, 1.0 - p)
             votes += (task_influence >= tau).long()
 
         selected_indices = torch.topk(votes, k=num_samples, largest=True).indices.tolist()
