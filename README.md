@@ -13,6 +13,7 @@
 [![](https://img.shields.io/github/contributors/OpenDCAI/DataFlex)](https://github.com/OpenDCAI/DataFlex/graphs/contributors)
 [![](https://img.shields.io/github/repo-size/OpenDCAI/DataFlex?color=green)](https://github.com/OpenDCAI/DataFlex)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/OpenDCAI/DataFlex)
+[![NeurIPS 2026](https://img.shields.io/badge/NeurIPS_2026-Accepted-success)](https://neurips.cc/Conferences/2026)
 
 <!-- [![](https://img.shields.io/github/last-commit/OpenDCAI/DataFlex)](https://github.com/OpenDCAI/DataFlex/commits/main/) -->
 <!--[![](https://img.shields.io/github/issues-raw/OpenDCAI/DataFlex)](https://github.com/OpenDCAI/DataFlex/issues) -->
@@ -24,6 +25,7 @@
 </div>
 
 ## 📰 1. News
+- **[2026-09-25] 🎉 DataFlex has been accepted to the NeurIPS 2026 Evaluation & Dataset Track!** Our paper, *DataFlex: A Unified Benchmark and Evaluation Platform for Data-Centric Training of Large Language Models*, will appear at **NeurIPS 2026**.
 - [2026-04-04] 🎉 Our [technical report](https://huggingface.co/papers/2603.26164) ranked #1 on the Hugging Face Daily Papers leaderboard for that day.
 - [2026-03-17] We now support gradient computation under DeepSpeed ZeRO-3, enabling training and analysis of larger-scale models.
 - [2025-12-23] 🎉 We’re excited to announce the first Data-Centric Training System DataFlex, is now released! Stay tuned for future updates.
@@ -270,7 +272,7 @@ Our gratitude extends to all contributors in the open-source community—their e
 
 ## 📜 7. Citation
 
-If you use DataFlex in your research, feel free to give us a cite.
+The DataFlex paper has been accepted to the **NeurIPS 2026 Evaluation & Dataset Track**. Until the official proceedings citation is available, please cite the arXiv version:
 ```bibtex
 @article{liang2026dataflex,
   title={DataFlex: A Unified Framework for Data-Centric Dynamic Training of Large Language Models},

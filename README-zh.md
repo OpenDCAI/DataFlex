@@ -13,6 +13,7 @@
 [![](https://img.shields.io/github/contributors/OpenDCAI/DataFlex)](https://github.com/OpenDCAI/DataFlex/graphs/contributors)
 [![](https://img.shields.io/github/repo-size/OpenDCAI/DataFlex?color=green)](https://github.com/OpenDCAI/DataFlex)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/OpenDCAI/DataFlex)
+[![NeurIPS 2026](https://img.shields.io/badge/NeurIPS_2026-Accepted-success)](https://neurips.cc/Conferences/2026)
 
 <!-- [![](https://img.shields.io/github/last-commit/OpenDCAI/DataFlex)](https://github.com/OpenDCAI/DataFlex/commits/main/) -->
 <!--[![](https://img.shields.io/github/issues-raw/OpenDCAI/DataFlex)](https://github.com/OpenDCAI/DataFlex/issues) -->
@@ -24,6 +25,7 @@
 </div>
 
 ## 📰 1. 新闻
+* **[2026-09-25] 🎉 DataFlex 论文被 NeurIPS 2026 Evaluation & Dataset Track 录用！** 论文 *DataFlex: A Unified Benchmark and Evaluation Platform for Data-Centric Training of Large Language Models* 将发表于 **NeurIPS 2026**。
 * [2026-04-04] 🎉 我们的[技术报告](https://huggingface.co/papers/2603.26164)在 Hugging Face Daily Papers 当日榜单中排名第一。
 * [2026-03-17] 我们现已支持在 DeepSpeed ZeRO-3 下进行梯度计算，从而支持更大规模模型的训练与分析。
 * [2025-12-23] 🎉 我们很高兴地宣布首个 **数据中心训练系统 DataFlex** 正式发布！敬请期待后续更新。
@@ -33,7 +35,7 @@
 <img src="https://github.com/user-attachments/assets/1fdb62e4-1143-4866-afd2-c1067ad25ae8">
 
 **DataFlex** 是一个构建在 [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) 之上的高级动态训练框架。
-它能够在训练过程中智能地调度数据，支持 **动态样本选择**、**领域比例调整** 以及 **动态加权**，旨在同时提升训练效率与最终模型性能。
+它能够在训练过程中智能地调度数据，并将若干难以复现的工作整合进统一框架，提供 **数据选择**、**数据配比** 与 **数据重加权** 的可复现实现，从而同时提升实验可复现性与最终模型性能。
 
 DataFlex 与 LLaMA-Factory 无缝集成，为研究人员和开发者提供更灵活、更强大的训练控制能力。关于目标与设计理念，请参考 [DataFlex-Doc](https://opendcai.github.io/DataFlex-Doc/)。
 
@@ -42,8 +44,7 @@ DataFlex 与 LLaMA-Factory 无缝集成，为研究人员和开发者提供更�
 ✅ 表示有官方仓库；
 ⚠️ 表示有官方仓库但存在问题。
 
-- **Dynamic Select Trainer（动态数据选择训练器）**：  
-  根据给定策略在训练过程中**动态选择训练样本**（例如，优先关注“困难样本”）。支持的数据选择算法总结如下：
+- **数据选择（Data Selection）**：根据给定策略在训练过程中动态选择训练样本（例如，优先关注“困难样本”）。支持的数据选择算法总结如下：
 <div align="center">
   
   | 方法 | 类别 | 是否需要模型参与 | 官方仓库 |
@@ -59,8 +60,7 @@ DataFlex 与 LLaMA-Factory 无缝集成，为研究人员和开发者提供更�
   
 </div>
 
-- **Dynamic Mix Trainer（动态数据混合训练器）**：  
-  在训练过程中**动态调整来自不同数据域的数据比例**。支持的数据混合算法总结如下：
+- **数据配比（Data Mixture）**：在训练过程中动态调整来自不同数据域的数据比例。支持的数据混合算法总结如下：
 <div align="center">
   
   | 方法 | 类别 | 是否需要模型参与 | 官方仓库 |
@@ -69,8 +69,7 @@ DataFlex 与 LLaMA-Factory 无缝集成，为研究人员和开发者提供更�
   | **ODM** | 在线混合 | ✅ 是 | ⚠️[official code](https://github.com/alon-albalak/online-data-mixing) |
 </div>
 
-- **Dynamic Weight Trainer（动态样本加权训练器）**：  
-  在反向传播过程中**动态调整样本权重**，以强调模型更偏好的数据。支持的数据重加权算法总结如下：
+- **数据重加权（Data Reweighting）**：在反向传播过程中动态调整样本权重，以强调模型更偏好的数据。支持的数据重加权算法总结如下：
   
 <div align="center">
   
@@ -79,11 +78,21 @@ DataFlex 与 LLaMA-Factory 无缝集成，为研究人员和开发者提供更�
   | **Loss Reweighting** | 基于损失 | ✅ 是 | ❌ |
   | **Joint-Update-Aware Reweighting** | 基于批次交互 | ✅ 是 | ❌ |
 </div>
-* **与 LLaMA-Factory 完全兼容**，可作为即插即用的替代方案。
+- **与 LLaMA-Factory 完全兼容**，可作为即插即用的替代方案。
 
 ## 📌 3. 快速开始
 
 请使用以下命令进行环境配置与安装👇
+
+请先安装 torch，避免 pip 解析到其他构建版本后再做替换：
+
+```bash
+pip install --index-url https://download.pytorch.org/whl/cu124 \
+    torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+```
+
+然后安装 DataFlex：
 
 ```bash
 pip install dataflex
@@ -97,15 +106,17 @@ cd DataFlex
 pip install -e .
 ```
 
-> **说明：** 需要 Python 3.11+ 与 LlamaFactory 0.9.5+，它们会随核心依赖一起自动安装。transformers 4.55 到 5.6 均可运行；较新的模型（Qwen3.5、Gemma 4）需要 transformers 5.5+。
+`examples/deepspeed` 下的所有配置都需要 DeepSpeed，它以可选依赖的形式提供：
 
-> ```bash
-> pip install --index-url https://download.pytorch.org/whl/cu124 \
->     torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0
-> python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
-> ```
+```bash
+pip install "dataflex[deepspeed]"        # 源码安装：pip install -e ".[deepspeed]"
+```
+
+> **说明：** 需要 Python 3.11+ 与 LlamaFactory 0.9.5+，它们会随核心依赖一起自动安装。transformers 4.55 到 5.6 均可运行；较新的模型（Qwen3.5、Gemma 4）需要 transformers 5.5+。如果需要在 DeepSpeed ZeRO-3 下使用 `train_from_scratch`，建议 transformers 5.3+。
 >
-> LESS selector 需要 TRAK，它是可选依赖：`pip install dataflex[less]`。
+> `deepspeed` 可选依赖被刻意限制在 0.17 以下：0.17+ 在上面钉住的 torch 版本上无法 import。如果你使用更新的 torch，可以自行放开这个上限。
+>
+> LESS selector 需要 TRAK，它是另一个可选依赖：`pip install dataflex[less]`。
 
 启动命令与 [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) 类似。
 下面给出一个使用 [LESS](https://arxiv.org/abs/2402.04333) 的示例：
@@ -125,7 +136,7 @@ dataflex-cli train examples/train_lora/selectors/less.yaml
 使用 DataFlex 可以在默认 LLaMA-Factory 训练的基础上提升模型性能。
 
 ### 数据选择与加权实验结果
-我们使用 Open-Hermes-2.5 的一个子集作为训练数据集。实验结果表明，相较于随机选择（random selector）基线，所采用的数据选择算法和数据重加权算法在与训练数据集相关的 MMLU 基准测试子集上均取得了更优的性能。对于 LESS 和 NICE 算法，我们将 MMLU-Validation-Set 作为验证集，并使用由 GPT-5 生成的推理轨迹（trajectory）进行验证。
+我们使用 [Open-Hermes-2.5](https://huggingface.co/datasets/OpenDCAI/DataFlex-selector-openhermes-10w) 的一个子集作为训练数据集。实验结果表明，相较于随机选择（random selector）基线，所采用的数据选择算法和数据重加权算法在与训练数据集相关的 [MMLU 基准测试](https://huggingface.co/datasets/OpenDCAI/dataflex-selector-MMLUSubset-test)子集上均取得了更优的性能。对于 LESS 和 NICE 算法，我们将 [MMLU-Validation-Set](https://huggingface.co/datasets/OpenDCAI/dataflex-selector-MMLUSubset-valid-cot) 作为验证集，并使用由 GPT-5 生成的推理轨迹（trajectory）进行验证。
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/817c7dd7-79cf-4c70-b683-32b5b4c1722b" width="49%">
@@ -260,7 +271,7 @@ DataFlex 主要聚焦于训练过程中的数据调度。若希望构建一条�
 
 ## 📜 7. 引用
 
-如果您在研究中使用了 DataFlex，欢迎引用我们的项目。
+DataFlex 论文已被 **NeurIPS 2026 Evaluation & Dataset Track** 录用。在正式论文集引用信息发布前，请暂时引用 arXiv 版本：
 ```bibtex
 @article{liang2026dataflex,
   title={DataFlex: A Unified Framework for Data-Centric Dynamic Training of Large Language Models},
