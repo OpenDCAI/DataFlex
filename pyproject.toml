@@ -30,7 +30,7 @@ dynamic = ["version", "dependencies"]
 
 [project.urls]
 Github = "https://github.com/OpenDCAI/DataFlex"
-Documentation = "https://opendcai.github.io/DataFlow-Doc"
+Documentation = "https://opendcai.github.io/DataFlex-Doc/"
 "Bug Reports" = "https://github.com/OpenDCAI/DataFlex/issues"
 
 [project.scripts]
