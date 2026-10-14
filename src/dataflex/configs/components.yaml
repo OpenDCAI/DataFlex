@@ -45,10 +45,23 @@ selectors:
     params:
       cache_dir: ../dataflex_saves/icons_output
       gradient_type: adam
-      proj_dim: 4096
-      seed: 123
+      # proj_dim 5120 / seed 0 match the reference implementation
+      # (github.com/princetonvisualai/icons, dim5120, collect_grads.py).
+      proj_dim: 5120
+      seed: 0
       save_interval: 16
+      # Sizes of the task validation sets concatenated into eval_dataset, in order.
+      # With a single entry (or null) there is only one task and the consensus
+      # degenerates to plain top-p influence selection.
       task_boundaries: null
+      # Slices that must share one vote, max-pooled like the reference code does for
+      # the 13 MME subtasks (icons/generalist.py). Entries index task_boundaries,
+      # e.g. [[3, 4, 5]] pools the 4th-6th slices into a single "MME" task.
+      pool_groups: null
+      # The paper's selection ratio p, which puts each task's vote threshold at the
+      # (1 - p) percentile. null derives p from the schedule as
+      # num_samples / len(dataset) instead.
+      vote_percentile: null
 
   cluster_less:
     name: cluster_less

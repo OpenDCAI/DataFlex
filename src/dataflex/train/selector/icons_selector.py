@@ -30,6 +30,87 @@ def _is_zero3(model) -> bool:
     return any(hasattr(p, 'ds_id') for p in model.parameters())
 
 
+def resolve_tasks(task_boundaries, pool_groups, n_eval) -> List[List[slice]]:
+    """Turn `task_boundaries` into one list of eval slices per task vote.
+
+    Every entry of `task_boundaries` is one contiguous validation slice, in the
+    order the rows were concatenated into `eval_dataset`. By default each slice is
+    its own task and casts one vote.
+
+    `pool_groups` merges several slices into a single task: their per-slice
+    influence score vectors are max-pooled before that task votes. This mirrors the
+    reference implementation (github.com/princetonvisualai/icons), where the 13 MME
+    subtask validation sets vote as one task and the per-subtask mean influence of
+    a training sample is the element-wise max over subtasks (icons/generalist.py).
+    Group entries are indices into the flat slice list, e.g. with boundaries
+    [1000, 500, 424, 120, 130] the MME subtasks at positions 3 and 4 are pooled by
+    [[3, 4]].
+    """
+    if not task_boundaries:
+        return [[slice(0, n_eval)]]
+    if sum(task_boundaries) != n_eval:
+        raise ValueError(
+            f"task_boundaries sum to {sum(task_boundaries)} but eval_dataset has {n_eval} samples"
+        )
+
+    slices, start = [], 0
+    for size in task_boundaries:
+        slices.append(slice(start, start + size))
+        start += size
+
+    if not pool_groups:
+        return [[s] for s in slices]
+
+    group_of = {}
+    for group_id, members in enumerate(pool_groups):
+        if not members:
+            raise ValueError(f"pool_groups[{group_id}] is empty")
+        for member in members:
+            if not 0 <= member < len(slices):
+                raise ValueError(
+                    f"pool_groups[{group_id}] index {member} is out of range for {len(slices)} slices"
+                )
+            if member in group_of:
+                raise ValueError(f"pool_groups index {member} appears in more than one group")
+            group_of[member] = group_id
+
+    # Tasks keep the order of their first slice, so a pooled group is scored where
+    # its first subtask sits in the concatenated eval set.
+    tasks, emitted = [], set()
+    for index in range(len(slices)):
+        if index not in group_of:
+            tasks.append([slices[index]])
+            continue
+        group_id = group_of[index]
+        if group_id not in emitted:
+            emitted.add(group_id)
+            tasks.append([slices[i] for i in sorted(pool_groups[group_id])])
+    return tasks
+
+
+def vote_consensus(train_grads, eval_grads, tasks, p, num_samples):
+    """Per-task influence -> per-task percentile threshold -> vote -> top by votes.
+
+    Mirrors the reference implementation (icons/generalist.py): a training sample's
+    influence on a task is the mean over that task's validation samples of the inner
+    product with the (already L2-normalized) projected gradients; it votes for the
+    task when that influence is at or above the task's ((1 - p) * 100)-th
+    percentile; the selection is the `num_samples` samples with the most votes,
+    which is Eqn. 8 of the paper for |S| = num_samples.
+    """
+    n_train = train_grads.shape[0]
+    votes = torch.zeros(n_train, dtype=torch.long)
+
+    for task_slices in tasks:
+        per_slice = [(train_grads @ eval_grads[sl].T).mean(dim=1) for sl in task_slices]
+        task_influence = per_slice[0] if len(per_slice) == 1 else torch.stack(per_slice).amax(dim=0)
+        tau = torch.quantile(task_influence, 1.0 - p)
+        votes += (task_influence >= tau).long()
+
+    selected_indices = torch.topk(votes, k=min(num_samples, n_train), largest=True).indices.tolist()
+    return selected_indices, votes
+
+
 @register_selector("icons")
 class IconsSelector(Selector):
     """
@@ -39,6 +120,20 @@ class IconsSelector(Selector):
     gradient influence, then aggregates the K per-task rankings by majority
     voting. The K tasks are read off a single `eval_dataset` whose rows are
     the task validation sets concatenated in order.
+
+    `pool_groups` reproduces the reference implementation's MME handling: several
+    slices can be pooled into one task vote by taking the element-wise max of their
+    per-slice influence vectors.
+
+    `vote_percentile` is the paper's selection ratio p, which sets each task's vote
+    threshold at the ((1 - p) * 100)-th percentile. Left unset, p is derived from
+    the schedule as `num_samples / len(dataset)`, i.e. the threshold adapts to how
+    much data the next update interval needs. Set it (p = 0.2 in the paper) to keep
+    the paper's threshold while still returning `num_samples` samples.
+
+    Note the reference pipeline uses *unnormalized* validation gradients for its MME
+    subtasks (scripts/3_specialist.sh reads all_unormalized.pt there) even though
+    the paper specifies cosine similarity; this selector normalizes every slice.
 
     ZeRO-3: stays on local partitions everywhere (num_params from ds_tensor,
     gradients from safe_get_local_grad, optimizer states from
@@ -57,7 +152,9 @@ class IconsSelector(Selector):
                  proj_dim: int = 8192,
                  save_interval: int = 16,
                  seed: int = 42,
-                 task_boundaries: Optional[Sequence[int]] = None):
+                 task_boundaries: Optional[Sequence[int]] = None,
+                 pool_groups: Optional[Sequence[Sequence[int]]] = None,
+                 vote_percentile: Optional[float] = None):
         super().__init__(dataset, accelerator, data_collator, cache_dir)
 
         self.eval_dataset = eval_dataset
@@ -65,28 +162,25 @@ class IconsSelector(Selector):
         self.proj_dim = proj_dim
         self.save_interval = save_interval
         self.seed = seed
+        if vote_percentile is not None and not 0.0 < vote_percentile <= 1.0:
+            raise ValueError(f"vote_percentile must be in (0, 1], got {vote_percentile}")
+        self.vote_percentile = vote_percentile
 
         self.device = self.accelerator.device
         self.dtype = torch.float16
 
-        self.task_slices = self._resolve_task_slices(task_boundaries, len(eval_dataset))
+        self.tasks = resolve_tasks(task_boundaries, pool_groups, len(eval_dataset))
 
         os.makedirs(self.cache_dir, exist_ok=True)
-        logger.info(f"IconsSelector initialized with {len(self.task_slices)} task(s). "
+        logger.info(f"IconsSelector initialized with {len(self.tasks)} task(s). "
                     f"Projected gradients will be saved in {self.cache_dir}")
-
-    def _resolve_task_slices(self, task_boundaries, n_eval) -> List[slice]:
-        if not task_boundaries:
-            return [slice(0, n_eval)]
-        if sum(task_boundaries) != n_eval:
-            raise ValueError(
-                f"task_boundaries sum to {sum(task_boundaries)} but eval_dataset has {n_eval} samples"
+        if len(self.tasks) == 1:
+            logger.warning(
+                "ICONS: a single task vote means the consensus degenerates to plain top-p "
+                "influence selection (no cross-task voting). Set task_boundaries to the sizes "
+                "of the concatenated task validation sets, and pool_groups for subtasks that "
+                "should share one vote, to run the method as published."
             )
-        slices, start = [], 0
-        for size in task_boundaries:
-            slices.append(slice(start, start + size))
-            start += size
-        return slices
 
     def _broadcast_bool(self, value: bool) -> bool:
         """Broadcast a boolean from rank 0 to all ranks to avoid cache-check divergence."""
@@ -210,17 +304,27 @@ class IconsSelector(Selector):
                 logger.info("CudaProjector not available. Using BasicProjector for gradient projection.")
         return projector
 
-    def _get_max_saved_index(self, save_dir) -> int:
-        if not os.path.exists(save_dir) or not self.accelerator.is_main_process:
-            return -1
-        files = [f for f in os.listdir(save_dir) if f.startswith("grads") and f.endswith(".pt")]
-        if not files:
-            return -1
-        return max(int(f.split('.')[0].split('-')[1]) for f in files)
+    def _clear_stale_chunks(self, save_dir) -> None:
+        """Drop chunk files left by an earlier, unfinished collection.
+
+        A collection always restarts from scratch (there is no partial resume), so
+        anything already in the directory is either from a crashed run or from a run
+        with a different dataset/world size. Merging those would silently duplicate
+        or conflict on sample indices, so the directory is emptied first.
+        """
+        if self.accelerator.is_main_process:
+            stale = glob.glob(os.path.join(save_dir, "grads-*.pt"))
+            for file_path in stale:
+                os.remove(file_path)
+            if stale:
+                logger.info(f"Removed {len(stale)} stale gradient chunk file(s) from {save_dir}.")
+        self.accelerator.wait_for_everyone()
 
     def _collect_and_save_projected_gradients(self, model, save_dir, dataset_to_use, gradient_type, optimizer_state=None):
         """Project per-sample gradients and save indexed chunks. ZeRO-3: all_reduce(SUM) reconstructs full projection."""
         zero3 = _is_zero3(model)
+        os.makedirs(save_dir, exist_ok=True)
+        self._clear_stale_chunks(save_dir)
         num_params = self._get_number_of_params(model, zero3)
         projector_class = self._get_trak_projector()
         _, _, ProjectionType = _trak_projectors()
@@ -257,11 +361,6 @@ class IconsSelector(Selector):
         # ZeRO-3: do NOT prepare dataloader — all ranks must see same samples for all_reduce
 
         save_interval = self.save_interval
-        start_count = self._get_max_saved_index(save_dir) + 1
-        if self.accelerator.is_main_process and start_count > 1:
-            logger.info(f"Resuming from sample index {start_count}.")
-        self.accelerator.wait_for_everyone()
-
         total_samples_in_loader = len(dataloader)
         grad_buffer = torch.zeros(save_interval, num_params, device=self.device, dtype=torch.float32)
         idx_buffer = torch.zeros(save_interval, dtype=torch.long)
@@ -317,9 +416,33 @@ class IconsSelector(Selector):
             return
 
         final_grads = torch.zeros(total_samples, self.proj_dim, dtype=torch.float32)
+        coverage = torch.zeros(total_samples, dtype=torch.long)
         for file_path in tqdm(files, desc="Merging files"):
             chunk = torch.load(file_path, map_location="cpu")
-            final_grads[chunk['indices']] = chunk['grads'].to(torch.float32)
+            indices = chunk['indices'].long()
+            grads = chunk['grads'].to(torch.float32)
+            if indices.numel() != grads.shape[0]:
+                raise RuntimeError(
+                    f"{file_path} holds {indices.numel()} indices for {grads.shape[0]} gradient rows"
+                )
+            if indices.numel() and (int(indices.min()) < 0 or int(indices.max()) >= total_samples):
+                raise RuntimeError(
+                    f"{file_path} indexes outside [0, {total_samples}); the directory holds chunks "
+                    f"from a different dataset. Delete {save_dir} and re-run the selection."
+                )
+            coverage[indices] += 1
+            final_grads[indices] = grads
+
+        missing = int((coverage == 0).sum())
+        if missing:
+            raise RuntimeError(
+                f"Gradient chunks in {save_dir} cover {total_samples - missing}/{total_samples} samples; "
+                f"a collection rank likely died before writing its last chunk. Delete {save_dir} and "
+                f"re-run the selection."
+            )
+        # ZeRO-3 has every rank write the same (all_reduced) chunk under its own rank
+        # suffix, so indices covered more than once are expected there and harmless:
+        # the rows hold identical values. The check above is what guards correctness.
 
         norms = final_grads.norm(dim=1, keepdim=True).clamp_(min=1e-12)
         final_grads.div_(norms)
@@ -374,7 +497,6 @@ class IconsSelector(Selector):
             eval_projected_grads = torch.load(eval_final_grads_path, map_location="cpu")
 
             selected_indices, votes = self._vote_select(train_projected_grads, eval_projected_grads, num_samples)
-            logger.info(f"Selecting top {num_samples} samples by influence consensus over {len(self.task_slices)} tasks.")
 
             metric_payload = {"icons_votes": [int(votes[i].item()) for i in selected_indices]}
             save_selection(save_path, selected_indices, metric_payload, self.accelerator)
@@ -388,16 +510,19 @@ class IconsSelector(Selector):
 
         return selected_indices
 
+    def _vote_p(self, n_train: int, num_samples: int) -> float:
+        """Selection ratio behind the vote threshold: explicit p, else the schedule's."""
+        p = self.vote_percentile if self.vote_percentile is not None else num_samples / n_train
+        if not 0.0 < p <= 1.0:
+            raise ValueError(
+                f"ICONS vote ratio p={p:.4f} must be in (0, 1]; check vote_percentile and the "
+                f"selection schedule (num_samples={num_samples}, dataset={n_train})."
+            )
+        return p
+
     def _vote_select(self, train_grads, eval_grads, num_samples):
         """Per-task influence -> per-task threshold vote -> top by total votes."""
-        n_train = train_grads.shape[0]
-        p = num_samples / n_train
-        votes = torch.zeros(n_train, dtype=torch.long)
-
-        for sl in self.task_slices:
-            task_influence = (train_grads @ eval_grads[sl].T).mean(dim=1)
-            tau = torch.quantile(task_influence, 1.0 - p)
-            votes += (task_influence >= tau).long()
-
-        selected_indices = torch.topk(votes, k=num_samples, largest=True).indices.tolist()
-        return selected_indices, votes
+        p = self._vote_p(train_grads.shape[0], num_samples)
+        logger.info(f"Selecting top {num_samples} samples by influence consensus over "
+                    f"{len(self.tasks)} task(s), vote threshold p={p:.4f}.")
+        return vote_consensus(train_grads, eval_grads, self.tasks, p, num_samples)
