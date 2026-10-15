@@ -241,6 +241,11 @@ def main():
         # Only print version and welcome
         print_welcome()
         return
+    elif command == "presel":
+        from dataflex.offline_selector.offline_presel_selector import main as presel_main
+
+        presel_main(sys.argv[1:])
+        return
     elif command != 'train':
         raise ValueError(f'Unknown command: {command}')
     cfg = read_args()
@@ -285,4 +290,4 @@ def main():
         )
         sys.exit(process.returncode)
     else:
-        run_exp()
+        run_exp(cfg)

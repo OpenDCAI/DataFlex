@@ -1,0 +1,29 @@
+# Train the separate reference adapter before IRS scoring.
+# Paths, batch, rank, epochs and reference budget must be set for the actual run.
+model_name_or_path: models/llava-v1.5-7b-stage1-hf
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_target: q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj
+lora_rank: 8
+lora_alpha: 16
+additional_target: multi_modal_projector
+freeze_multi_modal_projector: false
+freeze_vision_tower: true
+dataset: presel_reference
+dataset_dir: data
+template: llava
+cutoff_len: 2048
+packing: false
+output_dir: ../dataflex_saves/presel_reference
+logging_steps: 1
+save_steps: 10
+overwrite_output_dir: false
+report_to: none
+seed: 42
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 1
+learning_rate: 2.0e-4
+max_steps: 20
+bf16: true
+train_type: static

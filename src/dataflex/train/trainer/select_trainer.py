@@ -36,6 +36,7 @@ from typing_extensions import override
 import dataflex.train.selector  # noqa: F401
 from dataflex.core.registry import REGISTRY
 from dataflex.train.hooks import DataflexTrainerMixin, group_by_length_requested
+from dataflex.train.selector.stage_checkpoint import SelectionCheckpointMixin
 from dataflex.utils.load_component import load_component
 from dataflex.utils.logging import logger
 
@@ -44,7 +45,7 @@ if is_datasets_available():
     import datasets
 
 
-class SelectTrainer(DataflexTrainerMixin, CustomSeq2SeqTrainer):
+class SelectTrainer(SelectionCheckpointMixin, DataflexTrainerMixin, CustomSeq2SeqTrainer):
     def __init__(self, finetuning_args, processor=None, gen_kwargs=None, **kwargs):
         super().__init__(finetuning_args=finetuning_args, processor=processor, gen_kwargs=gen_kwargs, **kwargs)
         name = finetuning_args.component_name
@@ -65,6 +66,18 @@ class SelectTrainer(DataflexTrainerMixin, CustomSeq2SeqTrainer):
         )
 
         self.selector = REGISTRY.build("selector", name, runtime=runtime, cfg=sel_params)
+        if self._checkpoint_selection_stage and (
+            finetuning_args.warmup_step < 0 or finetuning_args.update_step <= 0
+        ):
+            raise ValueError("Adapt-inf requires warmup_step >= 0 and update_step > 0")
+        unique_budget = getattr(self.selector, "unique_budget", None)
+        if unique_budget is not None:
+            visits = self.dataflex_step_budget() * self._total_train_batch_size
+            if not 0 <= visits - unique_budget < self._total_train_batch_size:
+                raise ValueError(
+                    "Strict unique budget must match planned training visits, allowing only final-batch padding; "
+                    f"budget={unique_budget}, visits={visits}, global_batch={self._total_train_batch_size}"
+                )
         logger.info(f"[SelectTrainer] selector={name}, params={sel_params}")
         logger.info("[Dataflex] SelectTrainer initialized")
 
@@ -133,13 +146,15 @@ class SelectTrainer(DataflexTrainerMixin, CustomSeq2SeqTrainer):
         stage_steps = self._stage_steps
         budget = self.state.max_steps
 
-        if step_id == 0 or step_id >= budget:
+        if step_id >= budget or (step_id == 0 and not (self._checkpoint_selection_stage and fa.warmup_step == 0)):
             return None
 
         step_in_stage = step_id % stage_steps if stage_steps is not None else step_id
 
         # Stage rollover: draw a fresh warmup subset.
-        if stage_steps is not None and step_in_stage == 0:
+        if stage_steps is not None and step_in_stage == 0 and not (
+            self._checkpoint_selection_stage and fa.warmup_step == 0
+        ):
             self._dataflex_sync()
             return self.selector.warmup(self._warmup_samples, replacement=True)
 
@@ -218,8 +233,15 @@ class SelectTrainer(DataflexTrainerMixin, CustomSeq2SeqTrainer):
                 dataset=train_dataset,
                 lengths=lengths,
                 model_input_name=model_input_name,
+                generator=torch.Generator().manual_seed(getattr(self, "_selection_stage_seed", self.args.seed))
+                if self._checkpoint_selection_stage else None,
             )
 
+        if self._checkpoint_selection_stage:
+            from accelerate.data_loader import SeedableRandomSampler
+
+            seed = getattr(self, "_selection_stage_seed", self.args.seed)
+            return SeedableRandomSampler(train_dataset, data_seed=seed)
         return RandomSampler(train_dataset)
 
     @override
@@ -249,6 +271,10 @@ class SelectTrainer(DataflexTrainerMixin, CustomSeq2SeqTrainer):
             "pin_memory": self.args.dataloader_pin_memory,
             "persistent_workers": self.args.dataloader_persistent_workers,
         }
+        if self._checkpoint_selection_stage:
+            dataloader_params["generator"] = torch.Generator().manual_seed(
+                getattr(self, "_selection_stage_seed", self.args.seed)
+            )
 
         if not isinstance(train_dataset, torch.utils.data.IterableDataset):
             dataloader_params["sampler"] = self._get_train_sampler(train_dataset)

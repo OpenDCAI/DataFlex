@@ -1,0 +1,5 @@
+# Keep the pinned upstream files byte-for-byte (their SHA256 is tested).
+tests/fixtures/upstream/** -whitespace
+# These function bodies are imported verbatim from the same MIT sources.
+src/dataflex/utils/author_adapt.py -whitespace
+src/dataflex/utils/author_presel.py -whitespace

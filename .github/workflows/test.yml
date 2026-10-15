@@ -57,7 +57,7 @@ jobs:
           UV_SYSTEM_PYTHON: "1"
         run: |
           uv pip install --no-cache -r requirements.txt
-          uv pip install -e ".[dev]"
+          uv pip install -e ".[dev,multimodal-selection]"
           uv pip install llamafactory
 
       - name: Smoke test CLI
@@ -78,7 +78,10 @@ jobs:
           python -c "from dataflex.train.weighter import *"
           python -c "from dataflex.train.dataset import MixedProportionManager"
 
-      # - name: Run pytest
-      #   env:
-      #     PYTHONDONTWRITEBYTECODE: 1
-      #   run: pytest
+      - name: Test multimodal selection
+        env:
+          PYTHONDONTWRITEBYTECODE: 1
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          CUDA_VISIBLE_DEVICES: ""
+        run: python -m pytest -q tests

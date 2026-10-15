@@ -43,6 +43,7 @@ torch-npu = ["torch==2.4.0", "torch-npu==2.4.0.post2", "decorator"]
 deepspeed = ["deepspeed>=0.15.0,<0.17.0"]
 # Only the LESS selector needs TRAK, and it is a heavy build.
 less = ["traker"]
+multimodal-selection = ["scikit-learn>=1.3", "faiss-cpu>=1.8"]
 metrics = ["nltk", "jieba", "rouge-chinese"]
 flash-attn = ["flash-attn>=2.5.0"]
 liger-kernel = ["liger-kernel>=0.5.5"]

@@ -226,7 +226,7 @@ def launch():
         patch_lego_get_dataset()
 
     from llamafactory.train.tuner import run_exp
-    run_exp()
+    run_exp(cfg)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,38 @@
 # configs/components.yaml
 selectors:
+  adapt_inf_strict:
+    name: adapt_inf_strict
+    params:
+      cache_dir: ../dataflex_saves/adapt_inf_strict
+      unique_budget: 93690
+      num_clusters: 10
+      cluster_grid: [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
+      proj_dim: 8192
+      projection: rademacher
+      projection_backend: cuda
+      parameter_pattern: '\.layers\.16\..*lora_'
+      seed: 42
+      histogram_bins: 50
+      trim_fraction: 0.05
+      replacement: false
+      dataset_revision: null
+      enable_permanent_pruning: false
+  adapt_inf:
+    name: adapt_inf
+    params:
+      selection_budget: native  # preserve the author CCS output count; strict mode enforces its explicit unique budget
+      cache_dir: ../dataflex_saves/adapt_inf_output
+      num_clusters: 10
+      proj_dim: 512
+      projection: countsketch  # explicit approximation; none = exact, unprojected
+      projection_backend: cpu  # cuda caches the seeded mapping; uses additional GPU memory
+      parameter_pattern: "lora_"
+      seed: 42
+      histogram_bins: 50
+      trim_fraction: 0.05
+      replacement: false
+      dataset_revision: null  # pin data + image snapshot for production
+      enable_permanent_pruning: false  # staged mode is not implemented
   # Dynamic selectors
   nice:
     name: nice
