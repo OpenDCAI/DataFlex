@@ -1,6 +1,9 @@
 # LLaVA-1.5 example. Override model/data/output paths.
 # 32 processes x batch4 x accumulation1 = global batch128.
-# Strict trainer validates 93690 unique records against 732 steps and global batch128.
+# DataFlex schedule example; 732 steps are training visits, not a unique-record budget.
+# CCS output is used unchanged, and previously used records may be selected again.
+# Install dataflex[multimodal-selection] for the author's TRAK projector.
+# Inspect the WSS grid and set num_clusters in components.yaml for your dataset.
 model_name_or_path: models/llava-v1.5-7b-stage1-hf-tokenizer-fixed
 stage: sft
 do_train: true
@@ -15,7 +18,7 @@ cutoff_len: 2048
 packing: false
 preprocessing_num_workers: 16
 dataloader_num_workers: 4
-output_dir: ../dataflex_saves/adapt_inf_strict_training
+output_dir: ../dataflex_saves/adapt_inf_training
 report_to: none
 seed: 42
 per_device_train_batch_size: 4
@@ -32,7 +35,7 @@ logging_steps: 1
 train_type: dynamic_select
 disable_tqdm: true
 components_cfg_file: src/dataflex/configs/components.yaml
-component_name: adapt_inf_strict
+component_name: adapt_inf
 warmup_step: 100
 update_step: 382
 update_times: 10

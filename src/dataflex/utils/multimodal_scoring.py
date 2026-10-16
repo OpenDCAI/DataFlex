@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from contextlib import contextmanager
 from inspect import unwrap
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -166,56 +165,3 @@ def image_text_only_sample(sample, tokenizer, model_type=None):
         result["attention_mask"] = [sample["attention_mask"][i] for i in keep]
     assert_same_answers(labels, result["labels"])
     return result
-
-
-def project_gradients(gradients, dimension, seed, method="countsketch"):
-    """Fixed seeded CountSketch, explicitly an approximation to dense projection.
-
-    No dense [number_of_parameters, projection_dim] matrix is allocated.
-    method='none' preserves the full exact gradient representation.
-    """
-    if method not in ("countsketch", "none") or dimension < 1:
-        raise ValueError("invalid projection method or dimension")
-    if method == "none":
-        return np.concatenate([g.detach().float().cpu().numpy().ravel() for g in gradients])
-    result = np.zeros(dimension, dtype=np.float32)
-    rng = np.random.default_rng(seed)
-    for gradient in gradients:
-        values = gradient.detach().float().cpu().numpy().ravel()
-        for start in range(0, len(values), 65536):
-            chunk = values[start : start + 65536]
-            buckets = rng.integers(0, dimension, len(chunk))
-            signs = rng.integers(0, 2, len(chunk)) * 2 - 1
-            np.add.at(result, buckets, chunk * signs)
-    return result
-
-
-class CachedCountSketch:
-    """Cache the same seeded hash/sign map and reduce gradients on a device.
-
-    Uses the existing CountSketch mapping; reduction order can change float32
-    rounding. No dense parameter-by-projection matrix is constructed.
-    """
-
-    def __init__(self, gradients, dimension, seed, device):
-        self.dimension = dimension
-        self.device = torch.device(device)
-        self.sizes = [gradient.numel() for gradient in gradients]
-        rng = np.random.default_rng(seed)
-        self.maps = []
-        for size in self.sizes:
-            buckets = np.empty(size, dtype=np.int64)
-            signs = np.empty(size, dtype=np.float32)
-            for start in range(0, size, 65536):
-                stop = min(size, start + 65536)
-                buckets[start:stop] = rng.integers(0, dimension, stop - start)
-                signs[start:stop] = rng.integers(0, 2, stop - start) * 2 - 1
-            self.maps.append((torch.from_numpy(buckets).to(self.device), torch.from_numpy(signs).to(self.device)))
-
-    def __call__(self, gradients):
-        if [gradient.numel() for gradient in gradients] != self.sizes:
-            raise ValueError("cached projection parameter layout changed")
-        result = torch.zeros(self.dimension, dtype=torch.float32, device=self.device)
-        for gradient, (buckets, signs) in zip(gradients, self.maps):
-            result.scatter_add_(0, buckets, gradient.detach().float().reshape(-1).to(self.device) * signs)
-        return result.cpu().numpy()

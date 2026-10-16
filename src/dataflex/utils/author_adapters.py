@@ -1,7 +1,31 @@
-"""Input/RNG/budget boundaries around the unchanged published Adapt functions."""
+"""Input and RNG adapters for the published Adapt-inf functions."""
+
+# Uniform cluster-budget allocation is adapted from the upstream source.
+# MIT License
+#
+# Copyright (c) 2024 Adyasha Maharana
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
 
 import contextlib
 import io
+import math
 import random
 from types import SimpleNamespace
 
@@ -54,36 +78,27 @@ def author_ccs_indices(scores, budget, rng, bins=50):
     return result.astype(np.int64).tolist()
 
 
-def fit_selection_budget(selected, positions, budget, rng, policy):
-    """Keep raw author output, then explicitly enforce a caller's exact budget.
+def author_cluster_budgets(capacities, budget):
+    """Released uniform cluster-budget allocation, including ceil rounding.
 
-    `native` returns the original count. `exact` is the experiment's unique
-    record/exposure constraint; every truncation/fill is recorded separately.
-    This must never be represented as a property of the author's CCS algorithm.
+    Removes the upstream CLI-global args.n_clusters dependency only. The
+    selected count is not subsequently truncated or filled to fit the budget.
     """
-    if policy not in ("native", "exact"):
-        raise ValueError("selection_budget must be native or exact")
-    pool = set(positions)
-    if len(selected) != len(set(selected)) or not set(selected) <= pool:
-        raise ValueError("Invalid author selection indices")
-    raw_count = len(selected)
-    result = list(selected)
-    truncated = filled = 0
-    if policy == "exact":
-        if budget > len(pool):
-            raise ValueError("Unique budget exceeds candidate pool")
-        truncated = max(0, raw_count - budget)
-        result = result[:budget]
-        filled = max(0, budget - len(result))
-        if filled:
-            used = set(result)
-            remaining = [i for i in positions if i not in used]
-            result.extend(rng.sample(remaining, filled))
-    if not result and budget:
-        raise ValueError("Published CCS selected no samples; use an explicit exact-budget policy if required")
-    return result, {
-        "policy": policy,
-        "author_selected_count": raw_count,
-        "truncated_count": truncated,
-        "filled_count": filled,
-    }
+    capacities = np.asarray(capacities)
+    clusters = len(capacities)
+    if not clusters or np.any(capacities <= 0) or budget < 0:
+        raise ValueError("Cluster capacities must be positive and budget nonnegative")
+    if int(capacities.min()) * clusters >= budget:
+        return [math.ceil(budget / clusters)] * clusters
+    order = np.argsort(capacities)
+    per_cluster = math.ceil(budget / clusters)
+    budgets = []
+    for i, index in enumerate(order):
+        size = int(capacities[index])
+        if size < per_cluster:
+            budgets.append(size)
+            if i + 1 < clusters:
+                per_cluster += math.ceil((per_cluster - size) / (clusters - i - 1))
+        else:
+            budgets.append(per_cluster)
+    return [budgets[index] for index in np.argsort(order)]

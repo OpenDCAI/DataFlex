@@ -73,14 +73,6 @@ class SelectTrainer(DataflexTrainerMixin, CustomSeq2SeqTrainer):
             finetuning_args.warmup_step < 0 or finetuning_args.update_step <= 0
         ):
             raise ValueError("Adapt-inf requires warmup_step >= 0 and update_step > 0")
-        unique_budget = getattr(self.selector, "unique_budget", None)
-        if unique_budget is not None:
-            visits = self.dataflex_step_budget() * self._total_train_batch_size
-            if not 0 <= visits - unique_budget < self._total_train_batch_size:
-                raise ValueError(
-                    "Strict unique budget must match planned training visits, allowing only final-batch padding; "
-                    f"budget={unique_budget}, visits={visits}, global_batch={self._total_train_batch_size}"
-                )
         logger.info(f"[SelectTrainer] selector={name}, params={sel_params}")
         logger.info("[Dataflex] SelectTrainer initialized")
 

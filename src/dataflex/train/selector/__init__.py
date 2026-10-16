@@ -10,4 +10,3 @@ from .near_selector import *
 from .cluster_less_selector import *
 from .coincide_selector import *
 from .adapt_inf_selector import *
-from .strict_adapt_inf_selector import StrictAdaptInfSelector  # noqa: F401

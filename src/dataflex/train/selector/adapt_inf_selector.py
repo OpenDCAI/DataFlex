@@ -1,10 +1,17 @@
-"""Flex periodic Adapt-inf adaptation, with explicit projection/ablation limits."""
+"""Adapt-inf scoring and selection in DataFlex's periodic training schedule.
+
+Uses the authors' Rademacher projector and CCS output without global record
+exclusion or post-selection budget repair. The configured cluster count is
+explicit; WSS diagnostics support the paper's 5..50 search without inventing
+an automatic elbow rule.
+"""
 
 import hashlib
 import random
 import re
 import time
 import traceback
+from importlib.metadata import version
 from pathlib import Path
 
 import numpy as np
@@ -13,17 +20,13 @@ import torch.distributed as dist
 
 from dataflex.core.registry import register_selector
 from dataflex.utils.author_adapt import obtain_entropy_score
-from dataflex.utils.author_adapters import author_ccs_indices, author_zero_image_ig, fit_selection_budget
+from dataflex.utils.author_adapters import author_ccs_indices, author_cluster_budgets, author_zero_image_ig
 from dataflex.utils.multimodal_scoring import (
-    CachedCountSketch,
     answer_statistics,
     move_to_device,
-    project_gradients,
     scoring_state,
 )
 from dataflex.utils.multimodal_selection import (
-    allocate_budget,
-    cluster_features,
     fingerprint,
     score_distribution_entropy,
     write_json,
@@ -63,43 +66,35 @@ class AdaptInfSelector(Selector):
         data_collator,
         cache_dir,
         num_clusters=10,
-        proj_dim=512,
-        projection="countsketch",
-        parameter_pattern=".*",
+        cluster_grid=(5, 10, 15, 20, 25, 30, 35, 40, 45, 50),
+        proj_dim=8192,
+        parameter_pattern=r"\.layers\.16\..*lora_",
         seed=42,
+        projection_seed=0,
         histogram_bins=50,
-        trim_fraction=0.05,
-        replacement=False,
         dataset_revision=None,
-        enable_permanent_pruning=False,
-        projection_backend="cpu",
-        selection_budget="native",
     ):
         super().__init__(dataset, accelerator, data_collator, cache_dir)
-        if enable_permanent_pruning:
-            raise NotImplementedError(
-                "This is Flex-adapted periodic selection; staged permanent pruning is not implemented"
-            )
-        if num_clusters < 1 or proj_dim < 1 or histogram_bins < 2 or not 0 <= trim_fraction < 0.5:
-            raise ValueError("invalid Adapt-inf clustering/projection/histogram parameters")
-        if trim_fraction != 0.05:
-            raise ValueError("Published CCS uses fixed 5%/95% thresholds; trim_fraction must be 0.05")
-        if projection not in ("countsketch", "none", "rademacher"):
-            raise ValueError("projection must be countsketch, rademacher or none")
-        if projection_backend not in ("cpu", "cuda") or (projection == "none" and projection_backend != "cpu"):
-            raise ValueError("projection_backend must be cpu, or cuda with countsketch")
-        if projection == "rademacher" and projection_backend != "cuda":
-            raise ValueError("rademacher projection requires CUDA")
-        self.num_clusters, self.proj_dim, self.projection = int(num_clusters), int(proj_dim), projection
+        self.cluster_grid = list(cluster_grid)
+        if (
+            type(num_clusters) is not int
+            or num_clusters < 1
+            or not self.cluster_grid
+            or any(type(k) is not int or k < 1 for k in self.cluster_grid)
+            or num_clusters not in self.cluster_grid
+            or type(proj_dim) is not int
+            or proj_dim < 1
+            or histogram_bins != 50
+        ):
+            raise ValueError("Choose num_clusters from cluster_grid; projection must be positive and CCS uses 50 bins")
+        self.num_clusters, self.proj_dim = num_clusters, proj_dim
         self.parameter_pattern, self.seed = str(parameter_pattern), int(seed)
         re.compile(self.parameter_pattern)
-        self.histogram_bins, self.trim_fraction = int(histogram_bins), float(trim_fraction)
-        self.replacement, self.dataset_revision = bool(replacement), dataset_revision
-        self.projection_backend = projection_backend
-        if selection_budget not in ("native", "exact"):
-            raise ValueError("selection_budget must be native or exact")
-        self.selection_budget = selection_budget
+        self.projection_seed = int(projection_seed)
+        self.histogram_bins = 50
+        self.dataset_revision = dataset_revision
         self._gradient_projector = None
+        self._projector_type = None
         self.last_metadata = None
 
     def checkpoint_signature(self):
@@ -107,17 +102,16 @@ class AdaptInfSelector(Selector):
             {
                 "data": self._data_fingerprint(self.candidate_positions()),
                 "scoring_profile": "author-scores-ccs-d1b1b25-v2",
-                "selection_budget": self.selection_budget,
+                "projection_backend": self._projection_backend(self.accelerator.device).__name__,
+                "trak_version": version("traker"),
                 "config": [
                     self.num_clusters,
                     self.proj_dim,
-                    self.projection,
-                    self.projection_backend,
+                    self.cluster_grid,
+                    self.projection_seed,
                     self.parameter_pattern,
                     self.seed,
                     self.histogram_bins,
-                    self.trim_fraction,
-                    self.replacement,
                 ],
             }
         )
@@ -143,11 +137,11 @@ class AdaptInfSelector(Selector):
         positions = self.candidate_positions()
         if len(set(positions)) != len(positions) or any(p < 0 or p >= len(self.dataset) for p in positions):
             raise ValueError("candidate positions must be unique valid dataset indices")
-        if not positions or (num_samples > len(positions) and not self.replacement):
+        if not positions or num_samples > len(positions):
             raise ValueError("requested budget exceeds candidate pool without replacement")
         tokenizer = kwargs.get("tokenizer") or getattr(self.data_collator, "tokenizer", None)
         if tokenizer is None:
-            raise ValueError("a tokenizer is required to remove image tokens for IG")
+            raise ValueError("a tokenizer is required to identify the scoring configuration")
         model = self.accelerator.unwrap_model(model)
         parameters = [
             (n, p) for n, p in model.named_parameters() if p.requires_grad and re.search(self.parameter_pattern, n)
@@ -159,23 +153,22 @@ class AdaptInfSelector(Selector):
         world = dist.get_world_size() if dist.is_initialized() else 1
         key = fingerprint(
             {
-                "version": 7,
+                "version": 8,
                 "scoring_profile": "author-scores-ccs-d1b1b25-v2",
-                "selection_budget": self.selection_budget,
-                "selection_profile": getattr(self, "_strict_signature", None),
                 "model": _model_fingerprint(model, parameters),
                 "data": self._data_fingerprint(positions),
                 "step": int(step_id),
                 "budget": int(num_samples),
                 "clusters": self.num_clusters,
-                "projection": self.projection,
-                "projection_backend": self.projection_backend,
+                "cluster_grid": self.cluster_grid,
+                "projection": "trak-rademacher",
+                "projection_backend": self._projection_backend(self.accelerator.device).__name__,
+                "trak_version": version("traker"),
+                "projection_seed": self.projection_seed,
                 "dimension": self.proj_dim,
                 "parameters": self.parameter_pattern,
                 "seed": self.seed,
                 "bins": self.histogram_bins,
-                "trim": self.trim_fraction,
-                "replacement": self.replacement,
                 "collator": type(self.data_collator).__qualname__,
                 "tokenizer_vocabulary": getattr(tokenizer, "tokenizer", tokenizer).get_vocab(),
                 "padding_side": getattr(getattr(tokenizer, "tokenizer", tokenizer), "padding_side", None),
@@ -205,11 +198,10 @@ class AdaptInfSelector(Selector):
                 if (
                     cached["fingerprint"] != key
                     or not ids
-                    or (self.selection_budget == "exact" and len(ids) != num_samples)
                     or any(p not in pool for p in ids)
                 ):
                     raise ValueError("invalid cached selection")
-                if not self.replacement and len(set(ids)) != len(ids):
+                if len(set(ids)) != len(ids):
                     raise ValueError("cached selection has duplicates")
             except (ValueError, KeyError, TypeError, OSError):
                 cached = None
@@ -218,7 +210,7 @@ class AdaptInfSelector(Selector):
             self.last_metadata = {**cached, "cache_hit": True}
             return cached["selected_indices"]
         rows = np.arange(rank, len(positions), world)
-        dimension = self.proj_dim if self.projection != "none" else sum(p.numel() for _, p in parameters)
+        dimension = self.proj_dim
         # Per-rank disk arrays avoid all_gather of the full gradient pool. A
         # shared cache directory is required for distributed selection.
         feature_path = directory / f"rank_{rank}_features.npy"
@@ -264,19 +256,7 @@ class AdaptInfSelector(Selector):
                         stats = answer_statistics(outputs.logits, batch["labels"])
                         gradients = torch.autograd.grad(stats["loss"], [p for _, p in parameters], allow_unused=True)
                     gradients = [torch.zeros_like(p) if g is None else g for g, (_, p) in zip(gradients, parameters)]
-                    if self.projection_backend == "cuda":
-                        if self._gradient_projector is None:
-                            projector = CachedCountSketch
-                            if self.projection == "rademacher":
-                                from dataflex.train.selector.strict_adapt_inf_selector import CachedRademacher
-
-                                projector = CachedRademacher
-                            self._gradient_projector = projector(
-                                gradients, dimension, self.seed, self.accelerator.device
-                            )
-                        feature[local] = self._gradient_projector(gradients)
-                    else:
-                        feature[local] = project_gradients(gradients, dimension, self.seed, self.projection)
+                    feature[local] = self._project_gradients(gradients)
                     loss = float(stats["loss"].detach())
                     with torch.no_grad():
                         predictive_entropy = float(obtain_entropy_score(outputs, eval_batch_size=1))
@@ -311,6 +291,9 @@ class AdaptInfSelector(Selector):
             except OSError:
                 pass
         finally:
+            if self._gradient_projector is not None:
+                self._gradient_projector.free_memory()
+                self._gradient_projector = None
             try:
                 for array in (feature, scores):
                     if array is not None:
@@ -343,14 +326,11 @@ class AdaptInfSelector(Selector):
                 for start in range(0, len(features), 4096):
                     block = features[start : start + 4096]
                     block /= np.maximum(np.linalg.norm(block, axis=1, keepdims=True), 1e-12)
-                if hasattr(self, "cluster_paper_features"):
-                    labels = self.cluster_paper_features(features, directory)
-                else:
-                    labels = cluster_features(features, self.num_clusters, self.seed)
+                labels = self._cluster_features(features, directory)
                 np.save(directory / "cluster_ids.npy", labels)
                 np.save(directory / "dataset_positions.npy", np.asarray(positions))
                 cluster_ids, capacities = np.unique(labels, return_counts=True)
-                quotas = allocate_budget(capacities, min(num_samples, len(positions)))
+                quotas = author_cluster_budgets(capacities, num_samples)
                 rng = random.Random(self.seed + int(step_id))
                 selected, details = [], []
                 names = ["log_ppl", "el2n", "predictive_entropy", "ig"]
@@ -386,13 +366,10 @@ class AdaptInfSelector(Selector):
                             "author_ccs_selected_count": len(picked),
                         }
                     )
-                author_selected = list(selected)
-                selected, budget_adapter = fit_selection_budget(
-                    selected, positions, min(num_samples, len(positions)), rng, self.selection_budget
-                )
-                repeat_count = max(0, num_samples - len(selected)) if self.replacement else 0
-                if repeat_count:
-                    selected.extend(rng.choices(selected, k=repeat_count))
+                if not selected:
+                    raise ValueError("Published CCS selected no samples; adjust the requested budget or scoring pool")
+                if len(selected) != len(set(selected)) or not set(selected) <= set(positions):
+                    raise ValueError("Invalid author selection indices")
                 row_by_position = {position: row for row, position in enumerate(positions)}
                 result = {
                     "fingerprint": key,
@@ -404,12 +381,12 @@ class AdaptInfSelector(Selector):
                         for i, name in enumerate(names)
                     },
                     "mode": "flex-adapted-periodic",
-                    "projection": self.projection,
+                    "projection": "trak-rademacher",
+                    "projection_seed": self.projection_seed,
                     "scoring_profile": "author-scores-ccs-d1b1b25-v2",
-                    "selection_budget": self.selection_budget,
-                    "budget_adapter": budget_adapter,
+                    "requested_budget": int(num_samples),
+                    "selected_count": len(selected),
                     "remaining_adaptations": [
-                        "explicit exact budget only when configured",
                         "single-pool periodic schedule",
                         "configured trainable gradient subspace",
                     ],
@@ -417,7 +394,6 @@ class AdaptInfSelector(Selector):
                     "gradient_dimension": dimension,
                     "clusters": details,
                     "selection_seconds": time.monotonic() - started,
-                    "repeat_count": repeat_count,
                     "world_size": world,
                     "gpu_memory_peak_bytes": torch.cuda.max_memory_allocated(self.accelerator.device)
                     if self.accelerator.device.type == "cuda"
@@ -431,7 +407,6 @@ class AdaptInfSelector(Selector):
                         for i, name in enumerate(names)
                     },
                 }
-                write_json(directory / "author_selected_indices.json", author_selected)
                 write_json(directory / "selected_indices.json", selected)
                 write_json(selection_path, result)
                 payload = {"result": result}
@@ -442,3 +417,74 @@ class AdaptInfSelector(Selector):
             raise RuntimeError(payload["error"])
         self.last_metadata = payload["result"]
         return payload["result"]["selected_indices"]
+
+    def _project_gradients(self, gradients):
+        """Use the same TRAK backend selection and seed as the released code."""
+        if self._gradient_projector is None:
+            from trak.projectors import ProjectionType
+
+            device = gradients[0].device
+            projector = self._projection_backend(device)
+            self._gradient_projector = projector(
+                grad_dim=sum(g.numel() for g in gradients),
+                proj_dim=self.proj_dim,
+                seed=self.projection_seed,
+                proj_type=ProjectionType.rademacher,
+                device=device,
+                dtype=gradients[0].dtype,
+                block_size=128,
+                max_batch_size=16,
+            )
+        vector = torch.cat([g.detach().reshape(-1) for g in gradients]).to(torch.float16)
+        return self._gradient_projector.project(vector[None], model_id=0)[0].float().cpu().numpy()
+
+    def _projection_backend(self, device):
+        if self._projector_type is None:
+            try:
+                from trak.projectors import BasicProjector, CudaProjector
+            except ImportError as exc:
+                raise ImportError("Adapt-inf requires dataflex[multimodal-selection]") from exc
+            self._projector_type = BasicProjector
+            if device.type == "cuda":
+                try:
+                    import fast_jl
+
+                    num_sms = torch.cuda.get_device_properties(device.index).multi_processor_count
+                    fast_jl.project_rademacher_8(torch.zeros(8, 1000, device=device), 512, 0, num_sms)
+                    self._projector_type = CudaProjector
+                except Exception:
+                    # The authors also fall back to BasicProjector if fast_jl fails.
+                    pass
+        return self._projector_type
+
+    def _cluster_features(self, features, directory):
+        """Report the paper's WSS grid; use the explicitly configured k.
+
+        Neither the paper nor released code specifies an automatic elbow rule.
+        num_clusters is chosen from these diagnostics, as with the author's
+        --n-clusters argument, rather than an additional selection heuristic.
+        """
+        from sklearn.cluster import MiniBatchKMeans
+
+        if self.num_clusters > len(features):
+            raise ValueError("num_clusters exceeds the scoring pool")
+        diagnostics, chosen_labels = [], None
+        for k in self.cluster_grid:
+            if k > len(features):
+                continue
+            estimator = MiniBatchKMeans(n_clusters=k, batch_size=10240, random_state=self.seed)
+            estimator.fit(features)
+            labels = estimator.labels_
+            wss = 0.0
+            for start in range(0, len(features), 4096):
+                block = features[start : start + 4096]
+                delta = block - estimator.cluster_centers_[labels[start : start + len(block)]]
+                wss += float(np.einsum("ij,ij->", delta, delta, dtype=np.float64))
+            diagnostics.append({"k": k, "wss": wss})
+            if k == self.num_clusters:
+                chosen_labels = labels
+        write_json(
+            directory / "cluster_grid_selection.json",
+            {"grid": diagnostics, "selected_k": self.num_clusters, "rule": "explicit num_clusters; inspect WSS grid"},
+        )
+        return chosen_labels
