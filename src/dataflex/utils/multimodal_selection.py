@@ -64,53 +64,6 @@ def allocate_budget(capacities, budget, weights=None):
     return allocation.tolist()
 
 
-def score_distribution_entropy(scores, bins=50):
-    """Published Adapt-inf get_dist_entropy, including its original bin edges.
-
-    The author helper does not trim scores here. trim_fraction remains a CCS
-    setting, rather than silently changing expert selection. Constant/empty-bin
-    behavior is also inherited from the pinned upstream implementation.
-    """
-    from dataflex.utils.author_adapt import get_dist_entropy
-
-    values = np.asarray(scores)
-    if values.ndim != 1 or not len(values) or not np.isfinite(values).all() or bins < 2:
-        raise ValueError("expert scores must be a finite nonempty vector; bins >= 2")
-    with np.errstate(divide="ignore", invalid="ignore"):
-        return float(get_dist_entropy(values, nbins=bins))
-
-
-def coverage_sample(scores, budget, rng, bins=50, trim_fraction=0.05):
-    """CCS: equal budget per score interval, with explicit capacity fallbacks."""
-    scores = np.asarray(scores, dtype=float)
-    if not np.isfinite(scores).all():
-        raise ValueError("CCS scores must be finite")
-    if budget < 0 or budget > len(scores):
-        raise ValueError("CCS budget exceeds capacity")
-    if bins < 2 or not 0 <= trim_fraction < 0.5:
-        raise ValueError("invalid CCS histogram parameters")
-    if not budget:
-        return [], {"trimmed_fallback_count": 0}
-    order = np.argsort(scores, kind="stable")
-    trim = int(len(scores) * trim_fraction)
-    interior = order[trim : len(scores) - trim] if trim else order
-    values = scores[interior]
-    if values.max() == values.min():
-        groups = [interior]
-    else:
-        boundaries = np.linspace(values.min(), values.max(), bins + 1)
-        labels = np.clip(np.searchsorted(boundaries, values, side="right") - 1, 0, bins - 1)
-        groups = [interior[labels == i] for i in range(bins)]
-    quotas = allocate_budget([len(group) for group in groups], min(budget, len(interior)))
-    selected = []
-    for group, quota in zip(groups, quotas):
-        if quota:
-            selected.extend(rng.choice(group, quota, replace=False).tolist())
-    fallback_count = budget - len(selected)
-    if fallback_count:
-        tail = np.setdiff1d(np.arange(len(scores)), interior)
-        selected.extend(rng.choice(tail, fallback_count, replace=False).tolist())
-    return selected, {"trimmed_fallback_count": fallback_count}
 
 
 def cluster_features(features, clusters, seed, minibatch=True):

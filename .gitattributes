@@ -1,3 +1,3 @@
-# These function bodies are imported verbatim from the same MIT sources.
-src/dataflex/utils/author_adapt.py -whitespace
-src/dataflex/utils/author_presel.py -whitespace
+# Preserve the vendored function bodies in their algorithm implementations.
+src/dataflex/train/selector/adapt_inf_selector.py -whitespace
+src/dataflex/offline_selector/record_presel_selector.py -whitespace

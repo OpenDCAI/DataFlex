@@ -1,3 +1,26 @@
+# Vendored unmodified function bodies from the upstream adapt-inf source.
+# MIT License
+#
+# Copyright (c) 2024 Adyasha Maharana
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
 """Adapt-inf scoring and selection in DataFlex's periodic training schedule.
 
 Uses the authors' Rademacher projector and CCS output without global record
@@ -6,21 +29,24 @@ explicit; WSS diagnostics support the paper's 5..50 search without inventing
 an automatic elbow rule.
 """
 
+import contextlib
 import hashlib
+import io
+import math
 import random
 import re
 import time
 import traceback
 from importlib.metadata import version
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import torch
 import torch.distributed as dist
+from tqdm import tqdm
 
 from dataflex.core.registry import register_selector
-from dataflex.utils.author_adapt import obtain_entropy_score
-from dataflex.utils.author_adapters import author_ccs_indices, author_cluster_budgets, author_zero_image_ig
 from dataflex.utils.multimodal_scoring import (
     answer_statistics,
     move_to_device,
@@ -28,7 +54,6 @@ from dataflex.utils.multimodal_scoring import (
 )
 from dataflex.utils.multimodal_selection import (
     fingerprint,
-    score_distribution_entropy,
     write_json,
 )
 
@@ -488,3 +513,187 @@ class AdaptInfSelector(Selector):
             {"grid": diagnostics, "selected_k": self.num_clusters, "rule": "explicit num_clusters; inspect WSS grid"},
         )
         return chosen_labels
+
+
+def obtain_entropy_score(outputs, eval_batch_size=None):
+    # Entropy of the probability vector
+
+    probs = torch.nn.Softmax(dim=-1)(outputs.logits)
+    entropy = -1 * probs * torch.log(probs + 1e-10)
+    # print(probs.shape, entropy.shape)
+    entropy = torch.mean(torch.sum(entropy, dim=-1), dim=-1).detach().cpu().squeeze()
+    # print('entropy', entropy.shape, entropy)
+    return entropy
+
+def get_dist_entropy(x, nbins=50, verbose=False):
+    """
+    x is assumed to be an (nsignals, nsamples) array containing integers between
+    0 and n_unique_vals
+    """
+
+    # normalize with mean and std dev
+    nan_count = np.count_nonzero(np.isnan(x))
+    if verbose:
+        x = x.astype(np.float32)
+        print("Replacing %s nan values in input vector" % nan_count)
+        print(x, np.mean(x), np.std(x))
+    x = np.nan_to_num(x)
+    
+    x_std = np.std(x)
+    x = (x - np.mean(x))/x_std
+
+    counts = np.zeros(nbins)
+    bins = np.linspace(-4*x_std, 4*x_std, nbins)
+    if verbose:
+        print(bins)
+        print(x)
+    for i in range(1, nbins):
+        counts[i] = np.sum((x > bins[i-1]) & (x <= bins[i]))
+
+    epsilon = np.finfo(float).eps
+    # divide by number of columns to get the probability of each unique value
+    p = counts / np.sum(counts)
+    # Replace zeros with epsilon
+    if verbose:
+        print(p)
+    p = np.where(p == 0, epsilon, p)
+    if verbose:
+        print(p)
+    nan_count = np.count_nonzero(np.isnan(p))
+    if verbose:
+        print("Replacing %s nan values in prob. vector" % nan_count)
+    p = np.nan_to_num(p)
+    if verbose:
+        print(p)
+        print(np.log2(p))
+
+    # compute Shannon entropy in bits
+    return -np.sum(p * np.log2(p))
+
+def obtain_ig_score(model, batch, ppl_with_image, eval_batch_size): #TODO: Fix
+
+    if eval_batch_size == 1:
+        batch['images'] = torch.zeros_like(batch['images'])
+        # print(batch.keys())
+        with torch.inference_mode():
+            loss_no_image = model(**batch).loss
+        ppl_wo_image = torch.exp(loss_no_image)
+        ig_score = ppl_wo_image/ppl_with_image
+        # print('ig_score', ig_score.shape, ig_score)
+        return ig_score
+    else:
+        raise NotImplementedError
+
+def set_outlier_threshold(scores):
+
+    scores = np.sort(scores)
+    low_thresh = scores[int(len(scores)*0.05)]
+    high_thresh = scores[int(len(scores)*0.95)]
+    print("Setting outlier threshold to %s (low) and %s (high)" % (low_thresh, high_thresh))
+    return low_thresh, high_thresh
+
+def get_ccs_samples(scores, bins, budget):
+
+    # low, high = set_outlier_threshold(list(scores.values()))
+    low, high = set_outlier_threshold(scores)
+    right = high
+
+    remaining = budget
+    budget = math.ceil(budget/bins)
+
+    selected_idxs = []
+    for i in tqdm(range(bins), desc="Getting CCS samples"):
+        left = right - ((high-low)/bins)
+        # candidates = [d for d in data.keys() if d in scores and scores[d] <= right and scores[d] >= left]
+        candidates = [j for j, score in enumerate(scores) if score > left and score <= right]
+        if len(candidates) < budget:
+            selected_idxs.extend(candidates)
+            if (i+1) < bins:
+                budget = math.ceil((remaining - len(candidates))/(bins-(i+1)))
+                remaining -= len(candidates)
+        else:
+            selected_idxs.extend(random.sample(candidates, k=budget))
+            remaining -= budget
+        print("Selected %s samples from between %s and %s values" % (len(selected_idxs), left, right))
+        right = left
+    
+    return np.array(selected_idxs)
+
+class _ImageArgumentAdapter:
+    def __init__(self, model):
+        self.model = model
+
+    def __call__(self, **batch):
+        # LLaVA author's `images` and HF's `pixel_values` are input API names.
+        # Keep all visual token positions and the same processed zero tensor.
+        pixels = batch.pop("images")
+        result = self.model(**{**batch, "pixel_values": pixels})
+        if getattr(result, "loss", None) is not None:
+            return result
+        # Tiny model fixtures may expose logits only; real HF models return loss.
+        return SimpleNamespace(loss=answer_statistics(result.logits, batch["labels"])["loss"])
+
+def author_zero_image_ig(model, batch, image_loss):
+    if "pixel_values" not in batch:
+        raise ValueError("Author IG requires processed image pixels")
+    inputs = {k: v for k, v in batch.items() if k != "pixel_values"}
+    inputs["images"] = batch["pixel_values"]
+    # The upstream function replaces only the shallow copy's image tensor.
+    return obtain_ig_score(_ImageArgumentAdapter(model), inputs, image_loss.detach().exp(), 1)
+
+def author_ccs_indices(scores, budget, rng, bins=50):
+    """Published interval/ceil/redistribution rules, with isolated Python RNG."""
+    scores = np.asarray(scores)
+    if scores.ndim != 1 or not len(scores) or not np.isfinite(scores).all():
+        raise ValueError("CCS needs a finite nonempty vector")
+    if type(budget) is not int or budget < 0 or bins < 1:
+        raise ValueError("Invalid CCS budget/bins")
+    saved = random.getstate()
+    random.setstate(rng.getstate())
+    try:
+        # Suppress author console output, not any sampling operation.
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            result = get_ccs_samples(scores, bins, budget)
+    finally:
+        rng.setstate(random.getstate())
+        random.setstate(saved)
+    return result.astype(np.int64).tolist()
+
+def author_cluster_budgets(capacities, budget):
+    """Released uniform cluster-budget allocation, including ceil rounding.
+
+    Removes the upstream CLI-global args.n_clusters dependency only. The
+    selected count is not subsequently truncated or filled to fit the budget.
+    """
+    capacities = np.asarray(capacities)
+    clusters = len(capacities)
+    if not clusters or np.any(capacities <= 0) or budget < 0:
+        raise ValueError("Cluster capacities must be positive and budget nonnegative")
+    if int(capacities.min()) * clusters >= budget:
+        return [math.ceil(budget / clusters)] * clusters
+    order = np.argsort(capacities)
+    per_cluster = math.ceil(budget / clusters)
+    budgets = []
+    for i, index in enumerate(order):
+        size = int(capacities[index])
+        if size < per_cluster:
+            budgets.append(size)
+            if i + 1 < clusters:
+                per_cluster += math.ceil((per_cluster - size) / (clusters - i - 1))
+        else:
+            budgets.append(per_cluster)
+    return [budgets[index] for index in np.argsort(order)]
+
+def score_distribution_entropy(scores, bins=50):
+    """Published Adapt-inf get_dist_entropy, including its original bin edges.
+
+    The author helper does not trim scores here. trim_fraction remains a CCS
+    setting, rather than silently changing expert selection. Constant/empty-bin
+    behavior is also inherited from the pinned upstream implementation.
+    """
+
+    values = np.asarray(scores)
+    if values.ndim != 1 or not len(values) or not np.isfinite(values).all() or bins < 2:
+        raise ValueError("expert scores must be a finite nonempty vector; bins >= 2")
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return float(get_dist_entropy(values, nbins=bins))

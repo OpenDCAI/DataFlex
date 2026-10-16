@@ -1,4 +1,4 @@
-"""Answer-only scoring and explicit Qwen-VL/LLaVA image ablation adapters."""
+"""Answer-only scoring and shared model/device state helpers."""
 
 from collections.abc import Mapping
 from contextlib import contextmanager
@@ -86,82 +86,3 @@ def assert_same_answers(first, second):
     second = torch.as_tensor(second).flatten()
     if not torch.equal(first[first != -100].cpu(), second[second != -100].cpu()):
         raise ValueError("paired conditions do not supervise exactly the same response tokens")
-
-
-def qwen_text_only_sample(sample, tokenizer):
-    """Remove Qwen image spans before re-collation; never send orphan image tokens.
-
-    This adapter is intentionally restricted to image-only Qwen-VL examples.
-    Other templates need an explicit adapter, not zeroed pixels or images=None.
-    """
-    if not sample.get("images") or sample.get("videos") or sample.get("audios"):
-        raise ValueError("IG requires an image-only example; text/video/audio examples are unsupported")
-    tokenizer = getattr(tokenizer, "tokenizer", tokenizer)
-    vocab = tokenizer.get_vocab()
-    tokens = ["<|vision_start|>", "<|vision_end|>", "<|image_pad|>"]
-    if not all(token in vocab for token in tokens):
-        raise ValueError("IG currently supports Qwen-VL image spans; supply a model-specific ablation adapter")
-    start_id, end_id, image_id = [vocab[token] for token in tokens]
-    ids, labels = list(sample["input_ids"]), list(sample["labels"])
-    keep, inside, image_seen, spans = [], False, False, 0
-    for i, token in enumerate(ids):
-        if token == start_id:
-            if inside:
-                raise ValueError("nested vision spans")
-            inside, image_seen = True, False
-        elif token == end_id:
-            if not inside or not image_seen:
-                raise ValueError("malformed or non-image vision span")
-            inside = False
-            spans += 1
-        elif inside:
-            image_seen |= token == image_id
-        else:
-            if token == image_id:
-                raise ValueError("image token outside vision span")
-            keep.append(i)
-        if inside or token in (start_id, end_id):
-            if labels[i] != -100:
-                raise ValueError("vision tokens must not be supervised")
-    if inside or spans != len(sample["images"]):
-        raise ValueError("image count and vision spans do not match")
-    result = {"input_ids": [ids[i] for i in keep], "labels": [labels[i] for i in keep], "images": []}
-    if "attention_mask" in sample:
-        result["attention_mask"] = [sample["attention_mask"][i] for i in keep]
-    assert_same_answers(labels, result["labels"])
-    return result
-
-
-def image_text_only_sample(sample, tokenizer, model_type=None):
-    """Remove image placeholders using the model's actual token layout.
-
-    LLaVA-1.5 expands each image into a consecutive run of <image> tokens.
-    These are removed entirely, preserving all response labels. Other LLaVA
-    families are deliberately not inferred from the shared placeholder name.
-    """
-    if model_type != "llava":
-        return qwen_text_only_sample(sample, tokenizer)
-    if not sample.get("images") or sample.get("videos") or sample.get("audios"):
-        raise ValueError("IG requires an image-only LLaVA example")
-    tokenizer = getattr(tokenizer, "tokenizer", tokenizer)
-    image_id = tokenizer.get_vocab().get("<image>")
-    if image_id is None:
-        raise ValueError("LLaVA IG requires the registered <image> token")
-    ids, labels = list(sample["input_ids"]), list(sample["labels"])
-    keep, spans, previous_image = [], 0, False
-    for i, token in enumerate(ids):
-        is_image = token == image_id
-        if is_image:
-            if labels[i] != -100:
-                raise ValueError("vision tokens must not be supervised")
-            spans += not previous_image
-        else:
-            keep.append(i)
-        previous_image = is_image
-    if spans != len(sample["images"]):
-        raise ValueError("image count and LLaVA token spans do not match")
-    result = {"input_ids": [ids[i] for i in keep], "labels": [labels[i] for i in keep], "images": []}
-    if "attention_mask" in sample:
-        result["attention_mask"] = [sample["attention_mask"][i] for i in keep]
-    assert_same_answers(labels, result["labels"])
-    return result
