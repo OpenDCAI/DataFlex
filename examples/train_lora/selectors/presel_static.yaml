@@ -1,31 +1,48 @@
-# PreSel exports selected_training.json and its presel_selected registry entry.
-# Override dataset_dir with the offline selection output directory.
-# Use the pre-VIT stage1 merge, not an instruction-tuned stage2 model.
-model_name_or_path: models/llava-v1.5-7b-stage1-hf
-trust_remote_code: true
+# LLaVA-1.5 example. Override model/data/output paths.
+# 32 processes x batch4 x accumulation1 = global batch128.
+model_name_or_path: models/llava-v1.5-7b-stage1-hf-tokenizer-fixed
 stage: sft
 do_train: true
 finetuning_type: lora
-lora_target: q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj
-additional_target: multi_modal_projector
-freeze_multi_modal_projector: false
-freeze_vision_tower: true
-lora_rank: 8
-lora_alpha: 16
+lora_target: q_proj,v_proj
+lora_rank: 128
+lora_alpha: 256
 dataset: presel_selected
-dataset_dir: data
+dataset_dir: outputs/presel/selected
 template: llava
 cutoff_len: 2048
 packing: false
-output_dir: ../dataflex_saves/presel_smoke
-logging_steps: 1
-save_steps: 10
-overwrite_output_dir: false
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+output_dir: ../dataflex_saves/presel_selected
 report_to: none
 seed: 42
-per_device_train_batch_size: 1
+per_device_train_batch_size: 4
 gradient_accumulation_steps: 1
-learning_rate: 2.0e-4
-max_steps: 20
+learning_rate: 0.0002
+num_train_epochs: 1.0
 bf16: true
+gradient_checkpointing: true
+use_reentrant_gc: false
+flash_attn: fa2
+save_strategy: steps
+save_steps: 244
+logging_steps: 1
 train_type: static
+disable_tqdm: true
+overwrite_output_dir: false
+full_determinism: true
+freeze_multi_modal_projector: false
+freeze_vision_tower: true
+additional_target: multi_modal_projector
+data_seed: 42
+save_total_limit: 3
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+weight_decay: 0.0
+ddp_timeout: 86400
+max_steps: -1
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+use_fast_tokenizer: false
+lora_dropout: 0.0
