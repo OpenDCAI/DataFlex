@@ -1,7 +1,7 @@
 """Sources of the per-sample score vector that drives ordering.
 
 The ordering patterns are pure functions of a score vector, so where that vector
-comes from is a separate, swappable concern. Three sources are provided:
+comes from is a separate, swappable concern. Four sources are provided:
 
     precomputed  - a quality score that already exists (FineWeb-Edu edu score,
                    QuRating, a KenLM perplexity, an LQS output). Free, and what
@@ -10,6 +10,8 @@ comes from is a separate, swappable concern. Three sources are provided:
                    over the pool but needs no data plumbing and reflects the
                    model's current state, which is what makes dynamic reordering
                    possible.
+    model_perplexity - exp(token-mean causal NLL) per sample under the current
+                   model, with the same scoring schedule as model_loss.
     cached       - reuse scores a selector already wrote to its cache, i.e. the
                    paper's "reuse pre-computed scores at zero extra cost"
                    argument expressed with DataFlex's own artifacts.
@@ -19,6 +21,7 @@ is `Reorder.polarity`, not the provider's job.
 """
 
 import json
+import math
 import os
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Sequence
@@ -26,7 +29,7 @@ from typing import Dict, List, Optional, Sequence
 import numpy as np
 import torch
 import torch.distributed as dist
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, default_collate
 from tqdm import tqdm
 
 from dataflex.utils.logging import logger
@@ -50,6 +53,18 @@ class _IndexedDataset(Dataset):
     def __getitem__(self, i):
         idx = self.indices[i] if self.indices is not None else i
         return {"idx": idx, **self.dataset[idx]}
+
+
+class _IndexedCollator:
+    """Keep scoring indices outside the training collator's column filtering."""
+
+    def __init__(self, data_collator):
+        self.data_collator = data_collator or default_collate
+
+    def __call__(self, features):
+        indices = torch.tensor([feature["idx"] for feature in features], dtype=torch.long)
+        rows = [{k: v for k, v in feature.items() if k != "idx"} for feature in features]
+        return {**self.data_collator(rows), "idx": indices}
 
 
 class ScoreProvider(ABC):
@@ -346,6 +361,125 @@ class ModelLossScoreProvider(ScoreProvider):
         return f"model_loss(batch_size={self.batch_size}, max_samples={self.max_samples})"
 
 
+class ModelPerplexityScoreProvider(ModelLossScoreProvider):
+    """Per-sample perplexity: exp(mean causal negative log-likelihood).
+
+    Only supervised, non-padding targets count. For SFT this is response PPL
+    conditioned on the prompt when prompt labels are -100. For packed data the
+    score describes the whole preprocessed row, not each original document.
+    Logits and labels are required: a batch-level scalar loss cannot recover
+    individual sample perplexities. Invalid rows inherit the scored pool median;
+    a pool with no valid scores raises instead of assigning a misleading PPL=1.
+
+    Use higher_later for an easy-to-hard difficulty curriculum. Exponentiation
+    preserves NLL ranks; it does not itself improve the curriculum.
+    """
+
+    @staticmethod
+    def _per_sample_loss(outputs, inputs) -> torch.Tensor:
+        logits = getattr(outputs, "logits", None)
+        labels = inputs.get("labels")
+        if logits is None or labels is None:
+            raise ValueError("model_perplexity requires per-token logits and labels, not a batch scalar loss")
+        if logits.ndim != 3 or labels.ndim != 2 or logits.shape[:2] != labels.shape:
+            raise ValueError("model_perplexity expects logits [batch, tokens, vocab] and labels [batch, tokens]")
+
+        # FP32 CE avoids half-precision overflow before exponentiating in FP64.
+        shift_logits = logits[:, :-1, :].float().contiguous()
+        shift_labels = labels[:, 1:].to(device=logits.device, dtype=torch.long).clone()
+        attention_mask = inputs.get("attention_mask")
+        if attention_mask is not None:
+            if attention_mask.shape != labels.shape:
+                raise ValueError("model_perplexity expects attention_mask [batch, tokens] matching labels")
+            mask = attention_mask.to(device=logits.device)
+            # Exclude padding targets AND a first token predicted from left pad.
+            valid = (mask[:, 1:] != 0) & (mask[:, :-1] != 0)
+            shift_labels.masked_fill_(~valid, -100)
+
+        token_losses = torch.nn.functional.cross_entropy(
+            shift_logits.reshape(-1, shift_logits.size(-1)),
+            shift_labels.reshape(-1),
+            reduction="none",
+            ignore_index=-100,
+        ).reshape_as(shift_labels)
+        active = (shift_labels != -100).sum(dim=1)
+        mean_nll = token_losses.sum(dim=1) / active.clamp_min(1)
+        return mean_nll.masked_fill(active == 0, float("nan")).detach()
+
+    def _compute_losses(self, model, positions: Sequence[int], step_id: int) -> Dict[int, float]:
+        # Keep the existing ModelLossScoreProvider scoring path unchanged. PPL
+        # needs its own collator so the training collator cannot drop row IDs,
+        # and its invalid rows must be filled in PPL space.
+        was_training = model.training
+        model.eval()
+        try:
+            loader = DataLoader(
+                _IndexedDataset(self.dataset, positions),
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers,
+                collate_fn=_IndexedCollator(self.data_collator),
+            )
+            loader = self.accelerator.prepare(loader)
+
+            local_nll, local_indices = [], []
+            for batch in tqdm(
+                loader,
+                desc=f"[Reorder PPL scoring @ step {step_id}]",
+                disable=not self.accelerator.is_main_process,
+                dynamic_ncols=True,
+            ):
+                index = batch["idx"]
+                if not torch.is_tensor(index):
+                    index = torch.tensor(index, dtype=torch.long, device=self.accelerator.device)
+                inputs = {key: value for key, value in batch.items() if key != "idx"}
+                with torch.no_grad():
+                    nll = self._per_sample_loss(model(**inputs), inputs)
+                local_nll.append(nll)
+                local_indices.append(index.view(-1).to(device=self.accelerator.device, dtype=torch.long))
+
+            if local_nll:
+                local_nll = torch.cat(local_nll).float()
+                local_indices = torch.cat(local_indices)
+            else:
+                local_nll = torch.zeros(0, device=self.accelerator.device)
+                local_indices = torch.zeros(0, dtype=torch.long, device=self.accelerator.device)
+
+            local_nll = self.accelerator.pad_across_processes(local_nll, dim=0, pad_index=float("nan"))
+            local_indices = self.accelerator.pad_across_processes(local_indices, dim=0, pad_index=-1)
+            nll_values = self.accelerator.gather(local_nll).detach().cpu().tolist()
+            indices = self.accelerator.gather(local_indices).detach().cpu().tolist()
+            return self._ppl_scores(nll_values, indices, positions)
+        finally:
+            model.train(was_training)
+
+    @staticmethod
+    def _ppl_scores(nll_values, indices, positions) -> Dict[int, float]:
+        scores: Dict[int, float] = {}
+        for nll, index in zip(nll_values, indices):
+            if index < 0 or index in scores or not math.isfinite(nll):
+                continue
+            try:
+                scores[int(index)] = math.exp(nll)
+            except OverflowError as exc:
+                raise ValueError("model_perplexity overflowed; check logits or use model_loss") from exc
+        if not scores:
+            raise ValueError("model_perplexity produced no valid sample scores")
+
+        # Fill invalid rows before the inherited scores_for lookup. For a
+        # subsample, its existing fill logic uses the PPL values returned here.
+        ordered = sorted(scores.values())
+        middle = len(ordered) // 2
+        fill = ordered[middle] if len(ordered) % 2 else ordered[middle - 1] / 2 + ordered[middle] / 2
+        missing = len(set(positions) - scores.keys())
+        if missing:
+            logger.warning(f"[Dataflex][Reorder] {missing} rows have no valid PPL; using the median")
+        return {int(index): scores.get(index, fill) for index in positions}
+
+    def describe(self) -> str:
+        return f"model_perplexity(batch_size={self.batch_size}, max_samples={self.max_samples})"
+
+
 def build_score_provider(
     source: str = "precomputed",
     *,
@@ -359,7 +493,7 @@ def build_score_provider(
     """Build a score provider from config.
 
     Args:
-        source: "precomputed" | "cached_selection" | "model_loss".
+        source: "precomputed" | "cached_selection" | "model_loss" | "model_perplexity".
         scores: an in-memory vector, used by the static path which reads the
             score column straight off the raw dataset.
         **params: forwarded to the chosen provider.
@@ -393,6 +527,18 @@ def build_score_provider(
             seed=params.get("seed", 42),
         )
 
+    if source == "model_perplexity":
+        return ModelPerplexityScoreProvider(
+            dataset=dataset,
+            accelerator=accelerator,
+            data_collator=data_collator,
+            batch_size=params.get("batch_size", 8),
+            num_workers=params.get("num_workers", 2),
+            max_samples=params.get("max_samples"),
+            seed=params.get("seed", 42),
+        )
+
     raise ValueError(
-        f"unknown score source '{source}'. Available: precomputed, cached_selection, model_loss"
+        f"unknown score source '{source}'. Available: precomputed, cached_selection, "
+        "model_loss, model_perplexity"
     )

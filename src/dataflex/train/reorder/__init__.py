@@ -11,6 +11,7 @@ from .patterns import PATTERNS, apply_pattern
 from .score_provider import (
     CachedSelectionScoreProvider,
     ModelLossScoreProvider,
+    ModelPerplexityScoreProvider,
     PrecomputedScoreProvider,
     ScoreProvider,
     build_score_provider,
@@ -50,6 +51,7 @@ __all__ = [
     "PrecomputedScoreProvider",
     "CachedSelectionScoreProvider",
     "ModelLossScoreProvider",
+    "ModelPerplexityScoreProvider",
     "build_score_provider",
     "apply_pattern",
     "resolve_reorder_kind",
