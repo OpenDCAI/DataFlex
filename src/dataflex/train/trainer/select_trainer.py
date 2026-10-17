@@ -21,6 +21,9 @@ as a selector.
 """
 
 import functools
+import json
+import random
+from pathlib import Path
 from typing import List, Optional
 
 import numpy as np
@@ -28,7 +31,7 @@ import torch
 from llamafactory.train.sft.trainer import CustomSeq2SeqTrainer
 from torch.utils.data import DataLoader, RandomSampler
 from transformers.trainer_pt_utils import LengthGroupedSampler
-from transformers.trainer_utils import has_length, seed_worker
+from transformers.trainer_utils import get_last_checkpoint, has_length, seed_worker
 from transformers.utils import is_datasets_available
 from typing_extensions import override
 
@@ -38,6 +41,7 @@ from dataflex.core.registry import REGISTRY
 from dataflex.train.hooks import DataflexTrainerMixin, group_by_length_requested
 from dataflex.utils.load_component import load_component
 from dataflex.utils.logging import logger
+from dataflex.utils.multimodal_selection import fingerprint, write_json
 
 
 if is_datasets_available():
@@ -65,6 +69,10 @@ class SelectTrainer(DataflexTrainerMixin, CustomSeq2SeqTrainer):
         )
 
         self.selector = REGISTRY.build("selector", name, runtime=runtime, cfg=sel_params)
+        if self._checkpoint_selection_stage and (
+            finetuning_args.warmup_step < 0 or finetuning_args.update_step <= 0
+        ):
+            raise ValueError("Adapt-inf requires warmup_step >= 0 and update_step > 0")
         logger.info(f"[SelectTrainer] selector={name}, params={sel_params}")
         logger.info("[Dataflex] SelectTrainer initialized")
 
@@ -133,13 +141,15 @@ class SelectTrainer(DataflexTrainerMixin, CustomSeq2SeqTrainer):
         stage_steps = self._stage_steps
         budget = self.state.max_steps
 
-        if step_id == 0 or step_id >= budget:
+        if step_id >= budget or (step_id == 0 and not (self._checkpoint_selection_stage and fa.warmup_step == 0)):
             return None
 
         step_in_stage = step_id % stage_steps if stage_steps is not None else step_id
 
         # Stage rollover: draw a fresh warmup subset.
-        if stage_steps is not None and step_in_stage == 0:
+        if stage_steps is not None and step_in_stage == 0 and not (
+            self._checkpoint_selection_stage and fa.warmup_step == 0
+        ):
             self._dataflex_sync()
             return self.selector.warmup(self._warmup_samples, replacement=True)
 
@@ -218,8 +228,15 @@ class SelectTrainer(DataflexTrainerMixin, CustomSeq2SeqTrainer):
                 dataset=train_dataset,
                 lengths=lengths,
                 model_input_name=model_input_name,
+                generator=torch.Generator().manual_seed(getattr(self, "_selection_stage_seed", self.args.seed))
+                if self._checkpoint_selection_stage else None,
             )
 
+        if self._checkpoint_selection_stage:
+            from accelerate.data_loader import SeedableRandomSampler
+
+            seed = getattr(self, "_selection_stage_seed", self.args.seed)
+            return SeedableRandomSampler(train_dataset, data_seed=seed)
         return RandomSampler(train_dataset)
 
     @override
@@ -249,6 +266,10 @@ class SelectTrainer(DataflexTrainerMixin, CustomSeq2SeqTrainer):
             "pin_memory": self.args.dataloader_pin_memory,
             "persistent_workers": self.args.dataloader_persistent_workers,
         }
+        if self._checkpoint_selection_stage:
+            dataloader_params["generator"] = torch.Generator().manual_seed(
+                getattr(self, "_selection_stage_seed", self.args.seed)
+            )
 
         if not isinstance(train_dataset, torch.utils.data.IterableDataset):
             dataloader_params["sampler"] = self._get_train_sampler(train_dataset)
@@ -263,3 +284,127 @@ class SelectTrainer(DataflexTrainerMixin, CustomSeq2SeqTrainer):
             dataloader_params["prefetch_factor"] = self.args.dataloader_prefetch_factor
 
         return self.accelerator.prepare(DataLoader(train_dataset, **dataloader_params))
+
+    # Selection checkpoints retain the selected indices and batch cursor on resume.
+    @property
+    def _checkpoint_selection_stage(self):
+        return bool(getattr(getattr(self, "selector", None), "checkpoint_stage", False))
+
+    def _selection_run_signature(self):
+        args, fa = self.args, self.finetuning_args
+        return fingerprint(
+            {
+                "selector": self.selector.checkpoint_signature(),
+                "schedule": [fa.warmup_step, fa.update_step, fa.update_times, self.dataflex_step_budget()],
+                "batch": [args.per_device_train_batch_size, args.gradient_accumulation_steps, args.world_size],
+                "sampling": [
+                    args.seed,
+                    args.data_seed,
+                    fa.disable_shuffling,
+                    args.dataloader_drop_last,
+                    getattr(args, "train_sampling_strategy", None),
+                    getattr(args, "group_by_length", False),
+                ],
+            }
+        )
+
+    def train(self, *args, **kwargs):
+        if not self._checkpoint_selection_stage:
+            return super().train(*args, **kwargs)
+        resume = kwargs.get("resume_from_checkpoint", args[0] if args else None)
+        if resume is True:
+            resume = get_last_checkpoint(self.args.output_dir)
+        self._dataflex_iterator = None
+        self._selection_pending_state = None
+        self._selection_stage_state = None
+        if resume:
+            path = Path(resume) / f"dataflex_selection_rank_{self.args.process_index}.json"
+            if not path.exists():
+                raise ValueError(
+                    f"selection stage state is missing: {path}; cannot resume this selected loader safely"
+                )
+            state = json.loads(path.read_text())
+            trainer_state = json.loads((Path(resume) / "trainer_state.json").read_text())
+            if state.get("version") != 1 or state.get("run_signature") != self._selection_run_signature():
+                raise ValueError("selection checkpoint dataset/algorithm/schedule/batch settings do not match")
+            if state.get("global_step") != trainer_state["global_step"]:
+                raise ValueError("selection checkpoint cursor does not match Trainer global_step")
+            indices = state.get("indices")
+            if (
+                not isinstance(indices, list)
+                or not indices
+                or any(type(i) is not int or not 0 <= i < len(self.train_dataset) for i in indices)
+                or type(state.get("batches_seen")) is not int
+                or state["batches_seen"] < 0
+            ):
+                raise ValueError("invalid selection checkpoint indices/batch cursor")
+            restore = getattr(self.selector, "restore_checkpoint_state", None)
+            if restore is not None:
+                restore(state.get("selector_state"), global_step=state["global_step"],
+                        opened_step=state["opened_step"], active_indices=indices)
+            self._selection_pending_state = state
+        # Upstream must not skip its unrelated full-pool iterator as well.
+        previous_skip = self.args.ignore_data_skip
+        self.args.ignore_data_skip = True
+        try:
+            return super().train(*args, **kwargs)
+        finally:
+            self.args.ignore_data_skip = previous_skip
+
+    def _dataflex_open_stage(self, indices):
+        if self._checkpoint_selection_stage:
+            step = self.state.global_step
+            seed = self.args.seed if self.args.data_seed is None else self.args.data_seed
+            self._selection_stage_seed = getattr(self, "_selection_restoring_seed", int(seed) + step)
+            self._selection_stage_state = {
+                "indices": list(indices),
+                "opened_step": step,
+                "sampler_seed": self._selection_stage_seed,
+                "batches_seen": 0,
+            }
+        return super()._dataflex_open_stage(indices)
+
+    def get_batch_samples(self, epoch_iterator, num_batches, device):
+        pending = getattr(self, "_selection_pending_state", None)
+        if pending is not None:
+            self._selection_pending_state = None
+            self._selection_stage_seed = pending["sampler_seed"]
+            # Opening normally seeds with the current step; resume needs the
+            # seed of the step at which this subset was originally opened.
+            self._selection_restoring_seed = pending["sampler_seed"]
+            python_rng, numpy_rng = random.getstate(), np.random.get_state()
+            try:
+                with torch.random.fork_rng():
+                    self._dataflex_open_stage(pending["indices"])
+                    for _ in range(pending["batches_seen"]):
+                        next(self._dataflex_iterator)
+            finally:
+                random.setstate(python_rng)
+                np.random.set_state(numpy_rng)
+                del self._selection_restoring_seed
+            self._selection_stage_state = {
+                key: pending[key] for key in ("indices", "opened_step", "sampler_seed", "batches_seen")
+            }
+        batches, count = super().get_batch_samples(epoch_iterator, num_batches, device)
+        if self._checkpoint_selection_stage:
+            self._selection_stage_state["batches_seen"] += len(batches)
+        return batches, count
+
+    def _save_checkpoint(self, model, trial, *args, **kwargs):
+        super()._save_checkpoint(model, trial, *args, **kwargs)
+        if self._checkpoint_selection_stage and self._selection_stage_state is not None:
+            output = Path(self._get_output_dir(trial=trial)) / f"checkpoint-{self.state.global_step}"
+            write_json(
+                output / f"dataflex_selection_rank_{self.args.process_index}.json",
+                {
+                    "version": 1,
+                    "global_step": self.state.global_step,
+                    "run_signature": self._selection_run_signature(),
+                    **self._selection_stage_state,
+                    "selector_state": self.selector.export_checkpoint_state(
+                        global_step=self.state.global_step,
+                        opened_step=self._selection_stage_state["opened_step"],
+                        active_indices=self._selection_stage_state["indices"],
+                    ) if hasattr(self.selector, "export_checkpoint_state") else None,
+                },
+            )

@@ -9,3 +9,4 @@ from .random_selector import *
 from .near_selector import *
 from .cluster_less_selector import *
 from .coincide_selector import *
+from .adapt_inf_selector import *

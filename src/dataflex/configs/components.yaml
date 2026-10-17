@@ -1,5 +1,17 @@
 # configs/components.yaml
 selectors:
+  adapt_inf:
+    name: adapt_inf
+    params:
+      cache_dir: ../dataflex_saves/adapt_inf
+      num_clusters: 10  # explicit choice; inspect the saved WSS grid for the actual dataset
+      cluster_grid: [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
+      proj_dim: 8192
+      projection_seed: 0  # author TRAK projection seed
+      parameter_pattern: '\.layers\.16\..*lora_'
+      seed: 42
+      histogram_bins: 50
+      dataset_revision: null
   # Dynamic selectors
   nice:
     name: nice
