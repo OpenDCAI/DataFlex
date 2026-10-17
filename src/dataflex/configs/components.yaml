@@ -263,7 +263,7 @@ reorders:
   # Every reorder is defined along three axes:
   #   pattern       : one of seven orderings, covering the four guidances of the paper
   #                   [shuffle, sorting, folding, zigzag, segment, stair, saw]
-  #   score_source  : where the scores come from [precomputed, cached_selection, model_loss]
+  #   score_source  : where the scores come from [precomputed, cached_selection, model_loss, model_perplexity]
   #   apply_at      : the level the permutation is applied to [raw, index]
   #                   raw   = permute the raw rows before preprocessing. Required for
   #                           precomputed scores, because align_dataset drops the score
