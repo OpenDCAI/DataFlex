@@ -22,6 +22,7 @@ from typing import Callable, Dict, List, Optional, Sequence
 
 import numpy as np
 
+
 PATTERNS = ("shuffle", "sorting", "folding", "zigzag", "segment", "stair", "saw")
 
 # The reference implementation exposes the fold count under two different config
@@ -53,9 +54,8 @@ def sort_positions(
     """Order positions by score. Ties keep their incoming relative order."""
     if len(positions) != len(scores):
         raise ValueError(f"positions/scores length mismatch: {len(positions)} vs {len(scores)}")
-    order = np.argsort(np.asarray(scores, dtype=np.float64), kind="stable")
-    if not ascending:
-        order = order[::-1]
+    scores = np.asarray(scores, dtype=np.float64)
+    order = np.argsort(scores if ascending else -scores, kind="stable")
     positions = np.asarray(positions)
     return positions[order].tolist()
 
