@@ -1,0 +1,45 @@
+### Multimodal Loss: s = L(R|Q,I)
+# FORCE_TORCHRUN=1 DISABLE_VERSION_CHECK=1 dataflex-cli train examples/train_lora/weighters/multimodal_loss.yaml
+model_name_or_path: meta-llama/Llama-3.1-8B
+trust_remote_code: true
+enable_liger_kernel: false
+
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_target: all
+lora_rank: 16
+lora_alpha: 8
+
+dataset: alpaca_en_demo
+template: llama3
+cutoff_len: 2048
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 0
+seed: 42
+
+output_dir: ../dataflex_saves/multimodal_loss
+logging_steps: 10
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+report_to: none
+
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+learning_rate: 1.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+bf16: true
+ddp_timeout: 180000000
+
+train_type: dynamic_weight
+components_cfg_file: src/dataflex/configs/components.yaml
+component_name: multimodal_loss
+warmup_step: 0
+train_step: 500
+
+load_best_model_at_end: false
+eval_strategy: "no"

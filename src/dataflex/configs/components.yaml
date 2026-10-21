@@ -97,6 +97,64 @@ selectors:
       embedding_model_dtype: auto
       embedding_layer: -1
 
+  # ClusterTracIn: cluster + TracIn gradient scoring + softmax sampling
+  cluster_tracin:
+    name: cluster_tracin
+    params:
+      cache_dir: ../dataflex_saves/cluster_tracin_output
+      gradient_type: sgd
+      proj_dim: 8192                # TRAK projection dim for scoring
+      seed: 3
+      learning_rate: 1.0            # TracIn eta_k, multiplied on dot product
+      accumulate_checkpoints: true  # TracInCP: accumulate cluster scores across checkpoints
+      cluster_feature: gradient     # embedding or gradient
+      gradient_target_modules: [q_proj, k_proj, v_proj, o_proj]
+      gradient_proj_dim: 2048       # TRAK projection dim for clustering (separate from scoring)
+      cluster_size: 64              # approx samples per cluster
+      samples_per_cluster: 6
+      clustering_max_iter: 300
+      kmeans_n_init: 5
+      embedding_model_name_or_path: null
+      embedding_model_dtype: bf16
+      embedding_layer: -1
+      temperature: 0.01             # softmax temperature, smaller = sharper
+
+  # ClusterLoss: cluster + forward loss scoring, no gradients needed
+  cluster_loss:
+    name: cluster_loss
+    params:
+      cache_dir: ../dataflex_saves/cluster_loss_output
+      cluster_feature: gradient
+      gradient_target_modules: [q_proj, k_proj, v_proj, o_proj]
+      gradient_proj_dim: 2048
+      cluster_size: 64
+      samples_per_cluster: 6
+      clustering_max_iter: 300
+      kmeans_n_init: 5
+      embedding_model_name_or_path: null
+      embedding_model_dtype: bf16
+      embedding_layer: -1
+      temperature: 1.0
+      standardize: true             # z-score normalize cluster losses before sampling
+      score_clip: 3.0               # z-score clipping threshold
+
+  # TracIn: full-dataset SGD gradients, no clustering
+  tracin:
+    name: tracin
+    params:
+      cache_dir: ../dataflex_saves/tracin_output
+      gradient_type: sgd
+      proj_dim: 8192
+      seed: 3
+      learning_rate: 1.0
+      accumulate_checkpoints: true
+      normalize_scores: false       # true: cosine; false: raw dot product
+      cluster_feature: embedding
+      cluster_size: 64
+      embedding_model_name_or_path: null
+      embedding_model_dtype: bf16
+      embedding_layer: -1
+
   coincide:
     name: coincide
     params:
@@ -256,6 +314,37 @@ weighters:
     name: custom
     params:
       strategy: uniform
+
+  # Multimodal DeltaLoss: s = L(R|Q) - L(R|Q,I), two forwards per refresh
+  multimodal_deltaloss:
+    name: multimodal_deltaloss
+    params:
+      refresh_interval: 244         # full-pool scoring interval
+      delta: 1.0                    # weight strength, controls max/min ratio (delta=1 ~ 2.7x)
+      score_batch_size: 8
+      loss_reduction: token         # sample or token
+      cache_dir: ../dataflex_saves/multimodal_deltaloss_output
+
+  # Multimodal Loss: s = L(R|Q,I), single forward per refresh
+  multimodal_loss:
+    name: multimodal_loss
+    params:
+      refresh_interval: 244
+      delta: 1.0
+      score_batch_size: 8
+      loss_reduction: token
+      cache_dir: ../dataflex_saves/multimodal_loss_output
+
+  # Multimodal ADAPT: cosine similarity between training samples and anchor set (eval_dataset)
+  multimodal_adapt:
+    name: multimodal_adapt
+    params:
+      tau: 1.0                      # sigmoid temperature, smaller = sharper
+      refresh_interval: 50          # anchor refresh interval
+      anchor_batch_size: 8
+      clip: null                    # weight upper bound, null = no limit
+      pool: all                     # all / text / answer
+      weight_norm: mean1            # mean1 or none
 
 reorders:
   # Data reorders change sample order only; the number of samples is untouched.

@@ -8,5 +8,8 @@ from .nice_selector import *
 from .random_selector import *
 from .near_selector import *
 from .cluster_less_selector import *
+from .cluster_tracin_selector import *
+from .cluster_loss_selector import *
+from .tracin_selector import *
 from .coincide_selector import *
 from .adapt_inf_selector import *
