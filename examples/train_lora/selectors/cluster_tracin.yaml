@@ -1,0 +1,48 @@
+### ClusterTracIn: cluster + TracIn gradient scoring + softmax sampling
+# FORCE_TORCHRUN=1 DISABLE_VERSION_CHECK=1 dataflex-cli train examples/train_lora/selectors/cluster_tracin.yaml
+model_name_or_path: meta-llama/Llama-3.1-8B
+trust_remote_code: true
+
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_target: all
+lora_rank: 16
+lora_alpha: 8
+
+dataset: alpaca_en_demo
+eval_dataset: alpaca_zh_demo
+template: llama3
+cutoff_len: 4096
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 0
+seed: 42
+
+output_dir: ../dataflex_saves/Llama-3.1-8B/cluster_tracin
+logging_steps: 10
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+report_to: none
+
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 1
+learning_rate: 1.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+
+train_type: dynamic_select
+components_cfg_file: src/dataflex/configs/components.yaml
+component_name: cluster_tracin
+warmup_step: 10
+update_step: 10
+update_times: 2
+
+per_device_eval_batch_size: 1
+load_best_model_at_end: false
+eval_strategy: steps
+eval_steps: 10

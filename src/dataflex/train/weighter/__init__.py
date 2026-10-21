@@ -3,3 +3,6 @@ from .loss_weighter import *
 from .custom_weighter import CustomWeighter
 from .adapt_weighter import AdaptWeighter
 from .joint_update_aware_weighter import JointUpdateAwareWeighter
+from .multimodal_deltaloss_weighter import MultimodalDeltalossWeighter
+from .multimodal_loss_weighter import MultimodalLossWeighter
+from .multimodal_adapt_weighter import MultimodalAdaptWeighter
