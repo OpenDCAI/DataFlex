@@ -1,11 +1,13 @@
 
 import json
 import os
+from collections.abc import Mapping
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, List, Literal, Optional, Union
 
 import numpy as np
 from datasets import Dataset, DatasetDict, concatenate_datasets, load_dataset, load_from_disk
+from torch.utils.data import Dataset as TorchDataset
 
 from llamafactory.extras.constants import FILEEXT2TYPE
 from llamafactory.extras.misc import check_version, has_tokenized_data
@@ -22,7 +24,7 @@ from llamafactory.data.processor import (
 )
 from llamafactory.data.loader import _get_merged_dataset, _get_preprocessed_dataset
 
-from .metadata import DomainLabeledDataset
+from .metadata import SAMPLE_METADATA_KEYS
 
 if TYPE_CHECKING:
     from datasets import Dataset, IterableDataset
@@ -495,6 +497,41 @@ def make_reorder_get_dataset(reorder_factory):
 # ======================================================================
 # Lego
 # ======================================================================
+
+
+class DomainLabeledDataset(TorchDataset):
+    """Attach identity in the final, preprocessed training dataset's index space.
+
+    Wrap once after concatenating domains, before Subset/sampling/reordering.
+    Repeated draws keep the same idx. These IDs identify processed rows (packed
+    sequences when packing is enabled), not raw records or content hashes, and
+    are only stable for the same processed dataset and domain order.
+    """
+
+    def __init__(self, dataset, domain_ids):
+        self.dataset = dataset
+        self.domain_ids = np.asarray(domain_ids, dtype=np.int64)
+        if self.domain_ids.ndim != 1 or len(self.domain_ids) != len(dataset):
+            raise ValueError("domain_ids must be a one-dimensional label array aligned with the dataset")
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        idx = int(idx)
+        if idx < 0:
+            idx += len(self)
+        if idx < 0 or idx >= len(self):
+            raise IndexError(idx)
+        item = self.dataset[idx]
+        if not isinstance(item, Mapping):
+            raise TypeError("LEGO requires dataset rows to be mappings")
+        return {**item, "idx": idx, "domain_id": int(self.domain_ids[idx])}
+
+    @property
+    def column_names(self):
+        names = getattr(self.dataset, "column_names", None)
+        return list(dict.fromkeys([*names, *SAMPLE_METADATA_KEYS])) if names is not None else None
 
 
 def lego_get_dataset(

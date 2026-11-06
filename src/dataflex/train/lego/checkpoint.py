@@ -22,7 +22,7 @@ def dataset_identity(dataset):
         return None
     if isinstance(dataset, dict):
         return {key: dataset_identity(value) for key, value in dataset.items()}
-    from dataflex.train.data.metadata import DomainLabeledDataset
+    from dataflex.train.data.loader import DomainLabeledDataset
 
     if isinstance(dataset, DomainLabeledDataset):
         return fingerprint({"data": dataset_identity(dataset.dataset), "domains": dataset.domain_ids.tolist()})

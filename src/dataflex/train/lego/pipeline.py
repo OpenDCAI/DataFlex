@@ -7,7 +7,6 @@ import numpy as np
 import torch
 
 from dataflex.core.registry import REGISTRY
-from dataflex.train.data.metadata import DomainLabeledDataset
 from dataflex.utils.load_component import load_component
 from dataflex.utils.logging import logger
 
@@ -156,6 +155,8 @@ class SchedulePipeline:
     def _build_component(family: str, name: str, params: Dict[str, Any], runtime: Dict[str, Any]):
         """Instantiate a component the same way its dedicated trainer would."""
         if family == "selector":
+            from dataflex.train.data.loader import DomainLabeledDataset
+
             # The wrapper adds global IDs for training/weight lookup. Selectors
             # already return positions, so give them the same rows without those
             # extra fields. No subset or reindexing: candidate positions remain
