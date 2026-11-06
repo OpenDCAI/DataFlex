@@ -6,7 +6,7 @@ import numpy as np
 from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
 import torch.distributed as dist
-from dataflex.train.data.metadata import split_batch
+from dataflex.train.data.loader import split_batch
 from dataflex.core.registry import register_selector
 from .base_selector import Selector
 from dataflex.utils.logging import logger

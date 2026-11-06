@@ -17,7 +17,7 @@ import torch.distributed as dist
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
-from dataflex.train.data.metadata import split_batch
+from dataflex.train.data.loader import split_batch
 from dataflex.core.registry import register_weighter
 from dataflex.utils.logging import logger
 from .base_weighter import Weighter, component_context, scoring_mode

@@ -24,7 +24,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-from dataflex.train.data.metadata import split_batch
+from dataflex.train.data.loader import split_batch
 from dataflex.utils.logging import logger
 from dataflex.utils.loss_utils import per_sample_loss_from_outputs
 from dataflex.utils.multimodal_scoring import move_to_device, scoring_state

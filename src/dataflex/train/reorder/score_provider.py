@@ -32,7 +32,7 @@ import torch.distributed as dist
 from torch.utils.data import DataLoader, Dataset, default_collate
 from tqdm import tqdm
 
-from dataflex.train.data.metadata import split_batch
+from dataflex.train.data.loader import split_batch
 from dataflex.utils.logging import logger
 
 

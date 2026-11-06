@@ -7,7 +7,7 @@ import torch
 from transformers.trainer_utils import get_last_checkpoint
 from typing_extensions import override
 
-from dataflex.train.data.metadata import SAMPLE_METADATA_KEYS, MetadataCollator, split_batch
+from dataflex.train.data.loader import SAMPLE_METADATA_KEYS, MetadataCollator, split_batch
 from dataflex.train.hooks import group_by_length_requested
 from dataflex.train.lego import PlanContext, SchedulePipeline, ScoreBoard
 from dataflex.train.lego.checkpoint import dataset_identity, pipeline_state, restore_pipeline, save_atomic
