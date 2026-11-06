@@ -181,11 +181,13 @@ class Reorder(ABC):
             return not self.ascending
         return self.ascending
 
-    def apply(self, positions: Sequence[int], scores: Optional[Sequence[float]]) -> List[int]:
+    def apply(self, positions: Sequence[int], scores: Optional[Sequence[float]], *, ascending=None) -> List[int]:
         """Run the configured pattern over `positions`, honouring polarity and JIT."""
         params = dict(self.pattern_params)
         params.update(
-            ascending=self._effective_ascending(),
+            # Selector-provided direction is already resolved; do not invert it
+            # a second time through the standalone reorder's polarity.
+            ascending=self._effective_ascending() if ascending is None else ascending,
             window_size=self.window_size,
             seed=self.seed,
         )

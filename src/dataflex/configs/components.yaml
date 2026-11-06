@@ -182,6 +182,7 @@ selectors:
     params:
       cache_dir: ../dataflex_saves/loss_output
       focus: "medium"
+      score_ascending: true  # Medium focus has no inherent ordering direction.
       # Scoring is batch-invariant, so this only trades memory for speed.
       score_batch_size: 8
 
@@ -516,6 +517,22 @@ reorders:
 
   # Exact-loss version for LEGO shared/independent comparisons. The standalone
   # dynamic_saw preset above retains its optional scoring approximation.
+  lego_selector_folding:
+    name: lego_selector_folding
+    params:
+      kind: dynamic
+      apply_at: index
+      pattern: folding
+      pattern_params:
+        layers: 2
+      score_source: selector_score
+      score_params:
+        fallback: model_loss  # Random / first DeltaLoss call: raw loss ascending.
+      reorder_every: 1
+      consume_once: true
+      seed: 42
+      window_size: 0
+
   lego_dynamic_saw:
     name: lego_dynamic_saw
     params:
@@ -648,7 +665,8 @@ pipelines:
 
   # Online image-text composition. Select this preset in a dynamic_lego run
   # with a VLM and processed image-text data; the existing standalone component
-  # formulas and refresh schedules are reused. Choose independent for baseline.
+  # formulas and refresh schedules are reused. selector_score always reuses
+  # the selector output, including in independent raw-loss scoring mode.
   multimodal_lego:
     name: multimodal_lego
     params:
@@ -657,14 +675,15 @@ pipelines:
       score_num_workers: 2
       stages:
         - family: selector
-          component: loss          # alternatives: delta_loss, adapt_inf, random
+          component: loss          # alternatives: delta_loss, random
           mode: filter
           keep_ratio: 0.5
           every: 244
         - family: mixer
           component: static        # configure proportions for your domains; or random/odm
         - family: reorder
-          component: lego_dynamic_saw
+          component: lego_selector_folding
+          every: 244
         - family: weighter
           component: multimodal_deltaloss  # or multimodal_loss / multimodal_adapt
 

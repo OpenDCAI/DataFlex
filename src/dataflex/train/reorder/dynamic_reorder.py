@@ -191,7 +191,7 @@ class DynamicReorder(Reorder):
             scores = provider.scores_for(self._pool, model=model, step_id=step_id)
 
             is_main = self.accelerator is None or self.accelerator.is_main_process
-            ordered = self.apply(self._pool, scores) if is_main else None
+            ordered = self.apply(self._pool, scores, ascending=getattr(provider, "ascending", None)) if is_main else None
             ordered = self._broadcast(ordered) if (self.accelerator is not None) else (ordered or [])
 
             if is_main:

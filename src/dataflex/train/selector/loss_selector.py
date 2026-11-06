@@ -40,6 +40,7 @@ class LossSelector(Selector):
         temperature: float = 1.0,         # Temperature control
         score_batch_size: int = 1,        # Samples per scoring forward pass
         score_num_workers: int = 2,       # DataLoader workers for scoring
+        score_ascending: bool = None,     # Required for focus=medium when exporting order scores.
     ):
         super().__init__(dataset, accelerator, data_collator, cache_dir)
 
@@ -53,6 +54,11 @@ class LossSelector(Selector):
         self.temperature = temperature
         self.score_batch_size = int(score_batch_size)
         self.score_num_workers = int(score_num_workers)
+        if score_ascending is not None and not isinstance(score_ascending, bool):
+            raise ValueError("score_ascending must be a boolean or None")
+        if self.focus != "medium" and score_ascending is not None and score_ascending != (self.focus == "low"):
+            raise ValueError("score_ascending must agree with the loss selector's low/high focus")
+        self.score_ascending = score_ascending if self.focus == "medium" else self.focus == "low"
 
         logger.info(f"LossSelector initialized.")
 
@@ -132,7 +138,7 @@ class LossSelector(Selector):
         model.eval()
         os.makedirs(self.cache_dir, exist_ok=True)
         save_path = os.path.join(self.cache_dir, f"step_{step_id}.json")
-        if os.path.exists(save_path):
+        if self._score_sink is None and getattr(self, "reuse_selection_cache", True) and os.path.exists(save_path):
             if self.accelerator.is_main_process:
                 cached_indices, _ = load_cached_selection(save_path)
             else:
@@ -205,6 +211,8 @@ class LossSelector(Selector):
 
             # ========= Save (only save "selected indices + corresponding metric") =========
             metric_payload = {"loss": [float(scores[i]) for i in picked]}
+            self.publish_scores(sel, metric_payload["loss"], step_id,
+                                metric="loss", ascending=self.score_ascending)
             save_selection(save_path, sel, metric_payload, self.accelerator)
         else:
             sel = None

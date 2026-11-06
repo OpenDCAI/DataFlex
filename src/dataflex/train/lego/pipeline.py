@@ -69,6 +69,28 @@ class SchedulePipeline:
             ):
                 stage.validate_score_options()
 
+        selector = None
+        for stage in self.index_stages:
+            if isinstance(stage, SelectStage):
+                selector = stage
+            if not isinstance(stage, ReorderStage) or getattr(stage.component, "score_source", None) != "selector_score":
+                continue
+            from dataflex.train.reorder.dynamic_reorder import DynamicReorder
+
+            if scoreboard is None or selector is None or selector.name not in {"loss", "delta_loss", "random"}:
+                raise ValueError("selector_score requires ScoreBoard and an upstream loss/delta_loss/random selector")
+            if type(stage.component) is not DynamicReorder or stage.component.reorder_every != 1:
+                raise ValueError("selector_score requires dynamic reorder with reorder_every: 1")
+            if stage.warmup_step < selector.warmup_step:
+                raise ValueError("selector_score reorder cannot start before its selector")
+            if selector.name == "loss" and selector.component.score_ascending is None:
+                raise ValueError("Loss focus=medium requires explicit score_ascending for selector_score reorder")
+            if stage.component.score_params.get("fallback") not in {None, "model_loss"}:
+                raise ValueError("selector_score fallback must be model_loss or omitted")
+            stage.validate_score_options()
+            selector.publish_selection_scores = True
+            stage.selection_stage = selector
+
         self._plan: Optional[DataPlan] = None
         #: What each index stage last handed downstream, one slot per stage, so a
         #: stage that fires while its upstream does not can resume from its own

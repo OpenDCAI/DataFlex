@@ -107,6 +107,9 @@ class ScoreBoard:
         #: cache. Exposed so a run can show that sharing is working.
         self.compute_calls: Dict[str, int] = {}
         self.cache_hits: Dict[str, int] = {}
+        # Selector outputs are algorithm state, not raw-loss compute caches.
+        # Reorder consumes them in BOTH shared and independent modes.
+        self.selection_scores = {}
 
     @property
     def scoring_contract(self):
@@ -133,6 +136,7 @@ class ScoreBoard:
             self._values.clear()
             self._scored_at.clear()
             self._step.clear()
+            self.selection_scores.clear()
         self._model_ref = weakref.ref(core)
         return core
 
@@ -154,6 +158,37 @@ class ScoreBoard:
 
         return self.get(key, positions, step_id, compute, max_age=0, fill="nan", cache_invalid=True)
 
+    def put_selection_scores(self, consumer, payload):
+        indices = np.asarray(payload["indices"], dtype=np.int64)
+        scores = None if payload["scores"] is None else np.asarray(payload["scores"], dtype=np.float64)
+        if (indices.ndim != 1 or len(np.unique(indices)) != len(indices)
+                or (indices < 0).any() or (indices >= self.dataset_size).any()):
+            raise ValueError("Selector scores have invalid or duplicate sample IDs")
+        if scores is not None and (scores.shape != indices.shape or not np.isfinite(scores).all()):
+            raise ValueError("Selector scores must be finite and aligned with sample IDs")
+        if payload["step"] < 0 or payload["metric"] not in {None, "loss", "delta_loss"}:
+            raise ValueError("Invalid selector score step or metric")
+        if scores is not None and type(payload["ascending"]) is not bool:
+            raise ValueError("Selector score direction must be explicit")
+        if scores is None and (payload["metric"] is not None or payload.get("reason") != "random"):
+            raise ValueError("Only Random selection can publish no scores")
+        order = np.argsort(indices)
+        self.selection_scores[consumer] = {
+            **payload, "indices": indices[order].copy(),
+            "scores": None if scores is None else scores[order].copy(),
+        }
+
+    def selection_scores_for(self, consumer, positions, selection_step):
+        saved = self.selection_scores.get(consumer)
+        if saved is None or saved["step"] != selection_step:
+            raise ValueError("Missing selector scores for the active selection step")
+        positions = np.asarray(list(positions), dtype=np.int64)
+        ids = saved["indices"]
+        offsets = np.searchsorted(ids, positions)
+        if (offsets >= len(ids)).any() or not np.array_equal(ids[offsets], positions):
+            raise ValueError("Reorder candidate IDs are not covered by the selector scores")
+        return saved, None if saved["scores"] is None else saved["scores"][offsets].copy()
+
     def state_dict(self):
         return {
             "contract": self.scoring_contract,
@@ -162,6 +197,7 @@ class ScoreBoard:
             "step": self._step,
             "compute_calls": self.compute_calls,
             "cache_hits": self.cache_hits,
+            "selection_scores": self.selection_scores,
         }
 
     def load_state_dict(self, state):
@@ -176,6 +212,9 @@ class ScoreBoard:
         self._values, self._scored_at = values, stamps
         self._step = dict(state["step"])
         self.compute_calls, self.cache_hits = dict(state["compute_calls"]), dict(state["cache_hits"])
+        self.selection_scores = {}
+        for consumer, payload in state.get("selection_scores", {}).items():
+            self.put_selection_scores(consumer, payload)
         self._model_ref = None
 
     # ------------------------------------------------------------------

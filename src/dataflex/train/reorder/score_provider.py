@@ -501,6 +501,9 @@ def build_score_provider(
     """
     source = (source or "precomputed").lower()
 
+    if source == "selector_score":
+        raise ValueError("selector_score requires an upstream selector in a LEGO pipeline")
+
     if source == "precomputed":
         return PrecomputedScoreProvider(
             scores=scores,

@@ -203,6 +203,9 @@ class SelectStage(IndexStage):
 
     def apply(self, plan: DataPlan, ctx: PlanContext) -> DataPlan:
         self._share_scores(plan, ctx)
+        published = []
+        if getattr(self, "publish_selection_scores", False):
+            self.component.set_score_sink(published.append)
 
         if self.mode == "draw":
             num = ctx.interval_size
@@ -213,13 +216,32 @@ class SelectStage(IndexStage):
         # Components see the original row space, without LEGO's attached IDs.
         kwargs["dataset"] = getattr(self.component, "dataset", ctx.dataset)
         kwargs["data_collator"] = getattr(self.component, "data_collator", ctx.data_collator)
-        indices = self.component.select(
-            model=ctx.model,
-            step_id=ctx.step_id,
-            num_samples=num,
-            **kwargs,
-        )
+        try:
+            indices = self.component.select(
+                model=ctx.model,
+                step_id=ctx.step_id,
+                num_samples=num,
+                **kwargs,
+            )
+        finally:
+            if getattr(self, "publish_selection_scores", False):
+                self.component.set_score_sink(None)
         indices = list(indices or [])
+
+        if getattr(self, "publish_selection_scores", False):
+            payload = published[-1] if published else None
+            if self.name == "random":
+                payload = dict(indices=indices, scores=None, metric=None,
+                               ascending=None, step=ctx.step_id, reason="random")
+            # DeltaLoss's selection signal is produced on rank 0, just like
+            # its chosen IDs. Broadcast both, not independently recomputed deltas.
+            obj = [payload]
+            if dist.is_available() and dist.is_initialized():
+                dist.broadcast_object_list(obj, src=0)
+            payload = obj[0]
+            if payload is None or payload["indices"] != indices:
+                raise ValueError("Selector did not publish scores aligned with its selected IDs")
+            ctx.scoreboard.put_selection_scores(self.score_consumer, payload)
 
         if self.name in {"loss", "delta_loss", "adapt_inf", "random"}:
             pool = set(plan.as_list())
@@ -535,6 +557,39 @@ class ReorderStage(IndexStage):
 
     def _share_scores(self, ctx: PlanContext) -> None:
         """Swap the reorder's ScoreProvider for one backed by the shared board."""
+        if getattr(self.component, "score_source", None) == "selector_score":
+            selector = self.selection_stage
+            selection_step = selector._last_run_step
+            if selection_step is None or selection_step > ctx.step_id:
+                raise ValueError("Reorder requires an active upstream selection")
+            board, consumer = ctx.scoreboard, selector.score_consumer
+            snapshot, _ = board.selection_scores_for(consumer, [], selection_step)
+            fallback = snapshot.get("reason") in {"random", "delta_baseline"}
+            if fallback and self.component.score_params.get("fallback") != "model_loss":
+                raise ValueError(f"Selector has no ranking signal ({snapshot['reason']}); configure fallback: model_loss")
+            logger.info(
+                f"[Dataflex][Lego] reorder uses selector={consumer}, score_step={selection_step}, "
+                f"metric={snapshot['metric'] or 'loss'}, ascending={snapshot['ascending'] if not fallback else True}, "
+                f"fallback={snapshot.get('reason')}; selector scores are reused in both sharing modes"
+            )
+
+            class _SelectorProvider:
+                is_dynamic = False
+                ascending = True if fallback else snapshot["ascending"]
+
+                def scores_for(self, positions, model=None, step_id=0):
+                    _, scores = board.selection_scores_for(consumer, positions, selection_step)
+                    if scores is None:
+                        # Random has no model score. Delta's baseline already
+                        # contains raw loss, so it needs no additional forward.
+                        return board.loss_scores(model, positions, step_id, consumer=consumer).tolist()
+                    return scores.tolist()
+
+                def describe(self):
+                    return f"selector_score({consumer}, step={selection_step})"
+
+            self.component._provider = _SelectorProvider()
+            return
         if getattr(self.component, "score_source", None) != "model_loss":
             return
         if getattr(self.component, "_provider", "missing") == "missing":

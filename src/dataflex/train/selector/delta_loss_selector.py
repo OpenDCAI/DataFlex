@@ -172,7 +172,7 @@ class DeltaLossSelector(Selector):
             self.first_time = False
             self.path_to_initial_losses = save_path
             # Read and broadcast in main
-            if getattr(self, "reuse_selection_cache", True) and os.path.exists(save_path):
+            if self._score_sink is None and getattr(self, "reuse_selection_cache", True) and os.path.exists(save_path):
                 if self.accelerator.is_main_process:
                     cached_indices, metrics = load_cached_selection(save_path)
                     self._initial_losses = np.asarray(metrics["loss"], dtype=np.float64)
@@ -201,6 +201,9 @@ class DeltaLossSelector(Selector):
                 picked = torch.randperm(n, generator=gen)[:num_samples].tolist()
                 sel = [positions[i] for i in picked]
                 metric_payload = {"loss": self._dense_baseline(positions, scores).tolist()}
+                # The baseline call selects randomly; no delta exists yet.
+                self.publish_scores(sel, [scores[i] for i in picked], step_id,
+                                    metric="loss", ascending=True, reason="delta_baseline")
                 # Only save in main
                 save_selection(save_path, sel, metric_payload, self.accelerator)
 
@@ -218,7 +221,7 @@ class DeltaLossSelector(Selector):
         
         # ========= Subsequent call to select, select samples based on delta_loss =========
         
-        if getattr(self, "reuse_selection_cache", True) and os.path.exists(save_path):
+        if self._score_sink is None and getattr(self, "reuse_selection_cache", True) and os.path.exists(save_path):
             if self.accelerator.is_main_process:
                 cached_indices, _ = load_cached_selection(save_path)
             else:
@@ -310,6 +313,8 @@ class DeltaLossSelector(Selector):
             metric_payload = {
                 "delta_loss": [float(delta_loss[i].item()) for i in picked]
             }
+            self.publish_scores(sel, metric_payload["delta_loss"], step_id,
+                                metric="delta_loss", ascending=False)
             save_selection(save_path, sel, metric_payload, self.accelerator)
         else:
             sel = None
