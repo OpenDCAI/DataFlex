@@ -267,7 +267,7 @@ The two projects are independent with no code dependency, connected only by stan
 
 ## 🤝 6. Acknowledgements
 We thank [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) for offering an efficient and user-friendly framework for large model fine-tuning, which greatly facilitated rapid iteration in our training and experimentation workflows.  
-We thank Zhongguancun Academy for their API and GPU support.
+We thank Zhongguancun Academy for their API and GPU support [![中关村学院 GitHub 组织](https://img.shields.io/badge/Linked%20to-bjzgcai%20Org-blue?logo=github)](https://github.com/bjzgcai).
 Our gratitude extends to all contributors in the open-source community—their efforts collectively drive the development of DataFlex.
 
 ## 📜 7. Citation
