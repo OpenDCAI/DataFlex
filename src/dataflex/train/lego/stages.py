@@ -400,9 +400,8 @@ class MixStage(IndexStage):
         """How many samples to hand downstream.
 
         As the budget taker (nothing runs after) the answer is one interval. As
-        an intermediate stage it must *not* shrink to one interval: a reorder
-        stage that only ever sees a single interval cannot produce a curriculum
-        shape that spans several, which is the entire point of folding and saw.
+        an intermediate stage it reshapes the pool for a downstream budget
+        taker that orders a larger pool before choosing its interval.
 
         So reshape instead: keep the pool as large as the target proportions
         allow without drawing any sample twice. The binding constraint is the
@@ -530,15 +529,25 @@ class ReorderStage(IndexStage):
             )
 
     def apply(self, plan: DataPlan, ctx: PlanContext) -> DataPlan:
+        if not self.takes_budget and not len(plan):
+            return plan
         setter = getattr(self.component, "set_candidate_pool", None)
         if callable(setter):
+            if not self.takes_budget:
+                # Restart from the full interval even when its IDs match an
+                # already consumed candidate pool.
+                setter(None)
             setter(plan.as_list())
         domain_setter = getattr(self.component, "set_domain_ids", None)
         if callable(domain_setter) and ctx.domain_ids is not None:
             domain_setter(ctx.domain_ids)
         self._share_scores(ctx)
 
-        num = min(ctx.interval_size, len(plan)) if len(plan) else ctx.interval_size
+        num = ctx.interval_size
+        if not self.takes_budget:
+            num = len(plan)
+        elif len(plan):
+            num = min(num, len(plan))
         indices = self.component.next_indices(
             model=ctx.model,
             step_id=ctx.step_id,

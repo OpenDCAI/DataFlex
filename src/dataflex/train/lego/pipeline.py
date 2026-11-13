@@ -235,6 +235,13 @@ class SchedulePipeline:
             self.index_stages.sort(key=lambda s: rank.get(s.family, len(rank)))
 
         takers = [s for s in self.index_stages if s.takes_budget]
+        last = takers[-1] if takers else None
+        if isinstance(last, ReorderStage) and getattr(last.component, "pattern", None) == "folding":
+            if any(isinstance(s, MixStage) and not s.reweights_in_loss_space for s in takers[:-1]):
+                # Draw the mixer quotas before Folding so each layer spans
+                # the samples that will actually be trained this interval.
+                takers.pop().takes_budget = False
+
         if len(takers) > 1:
             # Only the last taker actually determines the interval, so the
             # earlier ones must not shrink it to the budget.
@@ -245,11 +252,11 @@ class SchedulePipeline:
                         f"takes the interval budget. Use mode: filter so it acts as a pool filter."
                     )
                 s.takes_budget = False
-            logger.info(
-                f"[Dataflex][Lego] {takers[-1].family}:{takers[-1].name} is the budget taker"
-            )
 
-        if not any(s.takes_budget for s in self.index_stages):
+        if takers:
+            taker = takers[-1]
+            logger.info(f"[Dataflex][Lego] {taker.family}:{taker.name} is the budget taker")
+        else:
             logger.info(
                 "[Dataflex][Lego] no configured stage takes the interval budget; "
                 "appending a uniform taker so the plan is always the right size"
@@ -326,6 +333,10 @@ class SchedulePipeline:
                 )
                 self._stage_out[i] = plan.indices
                 continue
+            if isinstance(stage, ReorderStage) and not stage.takes_budget and len(plan):
+                # Resolve short or oversized pools before Folding, including
+                # when the upstream mixer is still in warmup.
+                plan = self._enforce_budget(plan, ctx)
             plan = stage.apply(plan, ctx)
             stage.mark_run(ctx.step_id)
             self._stage_out[i] = plan.indices

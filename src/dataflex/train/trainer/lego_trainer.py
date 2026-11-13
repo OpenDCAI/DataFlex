@@ -158,6 +158,9 @@ class LegoTrainer(SelectTrainer):
             save_plans=bool(cfg.get("save_plans", False)),
             cache_dir=cfg.get("cache_dir") or str(Path(self.args.output_dir) / "lego_cache"),
         )
+        if any(stage.family == "reorder" and not stage.takes_budget for stage in self.pipeline.index_stages):
+            # The budget policy changes the planned samples under the same YAML.
+            self._lego_config["budget_before_reorder"] = True
 
         # The loop drives `self.selector`; the adapter routes it to the pipeline
         # without editing select_trainer.py.
