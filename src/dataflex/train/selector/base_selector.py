@@ -17,6 +17,16 @@ class Selector(ABC):
         # ---- composition hooks (see set_* below) ----
         self._candidate_pool: Optional[List[int]] = None
         self._score_source: Optional[Callable[[Sequence[int]], Sequence[float]]] = None
+        self._score_sink = None
+
+    def set_score_sink(self, fn) -> None:
+        """Optional LEGO consumer of the selected rows' actual scoring signal."""
+        self._score_sink = fn
+
+    def publish_scores(self, indices, scores, step_id, *, metric, ascending, reason=None):
+        if self._score_sink is not None:
+            self._score_sink(dict(indices=list(indices), scores=list(scores), step=int(step_id),
+                                  metric=metric, ascending=ascending, reason=reason))
 
     # ------------------------------------------------------------------
     # Composition hooks

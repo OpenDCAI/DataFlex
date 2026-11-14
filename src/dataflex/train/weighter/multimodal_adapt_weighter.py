@@ -17,9 +17,10 @@ import torch.distributed as dist
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
+from dataflex.train.data.loader import split_batch
 from dataflex.core.registry import register_weighter
 from dataflex.utils.logging import logger
-from .base_weighter import Weighter
+from .base_weighter import Weighter, component_context, scoring_mode
 
 IGNORE_INDEX = -100
 
@@ -95,7 +96,8 @@ class MultimodalAdaptWeighter(Weighter):
         整条 batch（含 pixel_values）喂给模型，多模态键自动带上。
         位置权重线性递增（1, 2, 3, ...），越靠后权重越大。
         """
-        model_inputs = {k: v for k, v in batch.items() if k not in ("labels", "idx")}
+        model_inputs, _ = split_batch(batch)
+        model_inputs.pop("labels", None)
         hidden = model(**model_inputs, output_hidden_states=True, use_cache=False).hidden_states[-1]
         keep = self._pool_mask(batch)[:, :hidden.size(1)].to(hidden.dtype)
         pos = torch.arange(1, hidden.size(1) + 1, device=hidden.device, dtype=hidden.dtype) * keep
@@ -115,13 +117,10 @@ class MultimodalAdaptWeighter(Weighter):
             embs.append(self._embed(model, b))
         self.anchor_emb = torch.cat(embs, dim=0)
 
-    # ---- 加权 ----
-
-    def get_weighted_loss(self, losses, *, ctx=None, model=None, inputs=None):
-        if (not torch.is_tensor(losses)) or losses.dim() == 0:
-            return losses
-        losses = losses.view(-1)
-
+    def prepare(self, ctx, model):
+        ctx = component_context(ctx, model=model)
+        if self.refresh_interval <= 0:
+            raise ValueError("refresh_interval must be positive")
         # 自动取 image_token_id
         if self.image_token_id is None and model is not None:
             cfg = getattr(ctx.accelerator.unwrap_model(model), "config", None) if ctx else None
@@ -130,15 +129,43 @@ class MultimodalAdaptWeighter(Weighter):
                                       getattr(cfg, "image_token_index", None)
 
         # 刷新 anchor（同一 step 只刷一次）
-        step = ctx.state.global_step if ctx else 0
+        step = ctx.step_id
         if self.anchor_emb is None or (step != self._last_refresh_step
                                         and step % self.refresh_interval == 0):
-            self._refresh_anchors(model)
+            with scoring_mode(model), ctx.accelerator.autocast():
+                self._refresh_anchors(model)
             self._last_refresh_step = step
+        self.anchor_emb = self.anchor_emb.to(ctx.accelerator.device)
+
+
+    def state_dict(self):
+        return {"anchor_emb": self.anchor_emb.detach().cpu() if self.anchor_emb is not None else None,
+                "last_refresh_step": self._last_refresh_step, "image_token_id": self.image_token_id}
+
+    def load_state_dict(self, state):
+        anchors = state["anchor_emb"]
+        if anchors is not None and (anchors.ndim != 2 or len(anchors) != len(self.eval_dataset)
+                                    or not torch.isfinite(anchors).all()):
+            raise ValueError("Checkpoint anchors do not match the anchor dataset")
+        self.anchor_emb = anchors
+        self._last_refresh_step = int(state["last_refresh_step"])
+        self.image_token_id = state["image_token_id"]
+
+    # ---- 加权 ----
+
+    def get_weighted_loss(self, losses, *, ctx=None, model=None, inputs=None):
+        if (not torch.is_tensor(losses)) or losses.dim() == 0:
+            return losses
+        losses = losses.view(-1)
+
+        ctx = component_context(ctx, model=model, batch=inputs) if ctx is not None else None
+        if self.anchor_emb is None:
+            raise RuntimeError("Anchors are uninitialized; call prepare() before the training forward")
 
         # 样本句向量 → 与全部 anchor 的平均 cosine → sigmoid
-        phi = self._embed(model, inputs)
-        score = (phi @ self.anchor_emb.t().to(phi.dtype)).mean(dim=1)
+        with scoring_mode(model):
+            phi = self._embed(model, inputs)
+        score = (phi @ self.anchor_emb.t().to(device=phi.device, dtype=phi.dtype)).mean(dim=1)
         weights = torch.sigmoid(score / max(self.tau, self.eps))
         if self.clip is not None:
             weights = weights.clamp(max=self.clip)
@@ -156,7 +183,7 @@ class MultimodalAdaptWeighter(Weighter):
                 mean_w = weights.mean()
             weights = weights / mean_w.clamp_min(self.eps)
 
-        if ctx and ctx.args.local_rank in [-1, 0]:
+        if ctx and ctx.accelerator.is_main_process:
             logger.info(f"[MultimodalAdapt] weights first={float(weights[0]):.4f}, "
                         f"batch mean={float(weights.mean()):.4f}")
 

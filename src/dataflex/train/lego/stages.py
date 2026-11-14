@@ -24,6 +24,7 @@ from dataflex.utils.logging import logger
 from .context import PlanContext
 from .plan import DataPlan
 
+
 #: Index-space stages run in this order regardless of how the YAML lists them.
 #: The order is forced by the algebra, not preference: proportions should be
 #: computed over survivors, a chunk must be known before it can be arranged, and
@@ -53,14 +54,11 @@ class Stage(ABC):
         self.name = name
         self.warmup_step = int(warmup_step or 0)
         self.every = max(1, int(every or 1))
-        #: How stale a shared score may be before this stage forces a recompute,
-        #: in optimizer steps. 0 means "only this boundary's value counts". Raising
-        #: it lets a frequently-firing stage reuse a score refreshed by a slower
-        #: one instead of paying for its own forward pass.
+        #: Kept for explicit validation of older configurations. Exact LEGO
+        #: loss scoring accepts only zero; component refresh clocks are separate.
         self.score_max_age = int(score_max_age or 0)
         self._last_run_step: Optional[int] = None
         self._cached: Optional[Any] = None
-        self._warned_score_cap = False
 
     def is_active(self, step_id: int) -> bool:
         """Whether this stage participates at all yet."""
@@ -87,44 +85,25 @@ class Stage(ABC):
                 logger.warning(f"[Dataflex][Lego] {self.name}.observe failed: {exc}")
 
     def board_score_fn(self, ctx: PlanContext):
-        """`fn(positions) -> scores` reading per-sample loss off the shared board.
-
-        This is the whole mechanism behind "compute the signal once per
-        boundary": every stage that wants per-sample loss asks the board for the
-        metric named "loss", and only the first asker actually pays for a
-        forward pass. Returns None when there is no board to share.
-        """
+        """Current-step answer loss through the common scoring backend."""
         if ctx.scoreboard is None:
             return None
+        self.validate_score_options()
+        consumer = getattr(self, "score_consumer", f"{self.family}:{self.name}")
 
-        stage = self
-
-        def fn(positions, model=None, step_id: Optional[int] = None):
-            step = ctx.step_id if step_id is None else step_id
-            params = getattr(stage.component, "score_params", {}) or {}
-            if params.get("max_samples") and not stage._warned_score_cap:
-                stage._warned_score_cap = True
-                logger.warning(
-                    f"[Dataflex][Lego] {stage.family}:{stage.name} sets max_samples="
-                    f"{params['max_samples']}, but the cap belongs to whichever stage triggers "
-                    f"the computation of a metric. A stage asking earlier in the same boundary "
-                    f"without a cap will score the whole pool and this one then hits the cache, "
-                    f"so the cap can silently not apply"
-                )
-            compute = ctx.scoreboard.per_sample_loss_fn(
+        def fn(positions, model=None, step_id=None, metric="loss_full"):
+            return ctx.scoreboard.loss_scores(
                 model if model is not None else ctx.model,
-                step,
-                max_samples=params.get("max_samples"),
-            )
-            return ctx.scoreboard.get(
-                "loss",
-                positions,
-                step_id=step,
-                compute_fn=compute,
-                max_age=stage.score_max_age,
+                positions, ctx.step_id if step_id is None else step_id,
+                consumer=consumer, metric=metric,
             ).tolist()
 
         return fn
+
+    def validate_score_options(self):
+        params = getattr(self.component, "score_params", {}) or {}
+        if self.score_max_age != 0 or params.get("max_samples") is not None:
+            raise ValueError("LEGO loss scoring requires score_max_age: 0 and no max_samples approximation")
 
     def describe(self) -> str:
         bits = [f"{self.family}={self.name}"]
@@ -181,11 +160,11 @@ class SelectStage(IndexStage):
     Two modes, because "selection" means different things depending on whether
     anything runs after it:
 
-    - ``filter`` keeps `keep_ratio * N` samples and leaves the interval draw to
-      a later stage. This is the coarse first stage that shrinks the pool so the
-      stages behind it have less to score.
-    - ``draw`` returns exactly `interval_size` samples, which is what a
-      standalone `dynamic_select` run does. In that case this stage is the taker.
+    - ``filter`` requests `keep_ratio * N` samples and leaves the interval draw
+      to a later stage. ADAPT-INF retains the actual author-CCS result, whose
+      size can differ after outlier filtering and cluster-budget rounding.
+    - ``draw`` returns exactly `interval_size` samples. In that case this stage
+      owns the interval budget, including when the selector is ADAPT-INF.
     """
 
     family = "selector"
@@ -199,6 +178,8 @@ class SelectStage(IndexStage):
         if self.mode == "filter" and not (0.0 < self.keep_ratio <= 1.0):
             raise ValueError(f"keep_ratio must be in (0, 1], got {self.keep_ratio}")
         self.takes_budget = mode == "draw"
+        if mode == "filter" and getattr(component, "replacement", False):
+            raise ValueError("LEGO filter selection requires replacement: false")
 
     def _share_scores(self, plan: DataPlan, ctx: PlanContext) -> None:
         """Point the selector at the current pool and at the shared board.
@@ -222,19 +203,63 @@ class SelectStage(IndexStage):
 
     def apply(self, plan: DataPlan, ctx: PlanContext) -> DataPlan:
         self._share_scores(plan, ctx)
+        published = []
+        if getattr(self, "publish_selection_scores", False):
+            self.component.set_score_sink(published.append)
 
         if self.mode == "draw":
             num = ctx.interval_size
         else:
             num = max(1, int(len(plan) * self.keep_ratio))
 
-        indices = self.component.select(
-            model=ctx.model,
-            step_id=ctx.step_id,
-            num_samples=num,
-            **ctx.as_component_kwargs(),
-        )
+        kwargs = ctx.as_component_kwargs()
+        # Components see the original row space, without LEGO's attached IDs.
+        kwargs["dataset"] = getattr(self.component, "dataset", ctx.dataset)
+        kwargs["data_collator"] = getattr(self.component, "data_collator", ctx.data_collator)
+        try:
+            indices = self.component.select(
+                model=ctx.model,
+                step_id=ctx.step_id,
+                num_samples=num,
+                **kwargs,
+            )
+        finally:
+            if getattr(self, "publish_selection_scores", False):
+                self.component.set_score_sink(None)
         indices = list(indices or [])
+
+        if getattr(self, "publish_selection_scores", False):
+            payload = published[-1] if published else None
+            if self.name == "random":
+                payload = dict(indices=indices, scores=None, metric=None,
+                               ascending=None, step=ctx.step_id, reason="random")
+            # DeltaLoss's selection signal is produced on rank 0, just like
+            # its chosen IDs. Broadcast both, not independently recomputed deltas.
+            obj = [payload]
+            if dist.is_available() and dist.is_initialized():
+                dist.broadcast_object_list(obj, src=0)
+            payload = obj[0]
+            if payload is None or payload["indices"] != indices:
+                raise ValueError("Selector did not publish scores aligned with its selected IDs")
+            ctx.scoreboard.put_selection_scores(self.score_consumer, payload)
+
+        if self.name in {"loss", "delta_loss", "adapt_inf", "random"}:
+            pool = set(plan.as_list())
+            # Author CCS trims outliers and rounds per-cluster budgets, so its
+            # result need not equal the requested count. A filter passes that
+            # actual pool downstream; it does not own the training interval's
+            # exact budget. Never fill or truncate CCS to force an exact count.
+            variable_filter = self.name == "adapt_inf" and self.mode == "filter"
+            valid_count = bool(indices) if variable_filter else len(indices) == num
+            if not valid_count or any(i not in pool for i in indices):
+                raise ValueError(f"{self.name} returned invalid IDs or a different selection budget")
+            if self.mode == "filter" and len(set(indices)) != len(indices):
+                raise ValueError(f"{self.name} returned duplicate IDs in filter mode")
+            if variable_filter and len(indices) != num:
+                logger.info(
+                    f"[Dataflex][Lego] adapt_inf filter requested {num}, retaining "
+                    f"{len(indices)} samples returned by author CCS"
+                )
 
         if self.mode == "filter":
             # A selector may return duplicates (several sample with replacement).
@@ -375,9 +400,8 @@ class MixStage(IndexStage):
         """How many samples to hand downstream.
 
         As the budget taker (nothing runs after) the answer is one interval. As
-        an intermediate stage it must *not* shrink to one interval: a reorder
-        stage that only ever sees a single interval cannot produce a curriculum
-        shape that spans several, which is the entire point of folding and saw.
+        an intermediate stage it reshapes the pool for a downstream budget
+        taker that orders a larger pool before choosing its interval.
 
         So reshape instead: keep the pool as large as the target proportions
         allow without drawing any sample twice. The binding constraint is the
@@ -505,15 +529,25 @@ class ReorderStage(IndexStage):
             )
 
     def apply(self, plan: DataPlan, ctx: PlanContext) -> DataPlan:
+        if not self.takes_budget and not len(plan):
+            return plan
         setter = getattr(self.component, "set_candidate_pool", None)
         if callable(setter):
+            if not self.takes_budget:
+                # Restart from the full interval even when its IDs match an
+                # already consumed candidate pool.
+                setter(None)
             setter(plan.as_list())
         domain_setter = getattr(self.component, "set_domain_ids", None)
         if callable(domain_setter) and ctx.domain_ids is not None:
             domain_setter(ctx.domain_ids)
         self._share_scores(ctx)
 
-        num = min(ctx.interval_size, len(plan)) if len(plan) else ctx.interval_size
+        num = ctx.interval_size
+        if not self.takes_budget:
+            num = len(plan)
+        elif len(plan):
+            num = min(num, len(plan))
         indices = self.component.next_indices(
             model=ctx.model,
             step_id=ctx.step_id,
@@ -532,6 +566,39 @@ class ReorderStage(IndexStage):
 
     def _share_scores(self, ctx: PlanContext) -> None:
         """Swap the reorder's ScoreProvider for one backed by the shared board."""
+        if getattr(self.component, "score_source", None) == "selector_score":
+            selector = self.selection_stage
+            selection_step = selector._last_run_step
+            if selection_step is None or selection_step > ctx.step_id:
+                raise ValueError("Reorder requires an active upstream selection")
+            board, consumer = ctx.scoreboard, selector.score_consumer
+            snapshot, _ = board.selection_scores_for(consumer, [], selection_step)
+            fallback = snapshot.get("reason") in {"random", "delta_baseline"}
+            if fallback and self.component.score_params.get("fallback") != "model_loss":
+                raise ValueError(f"Selector has no ranking signal ({snapshot['reason']}); configure fallback: model_loss")
+            logger.info(
+                f"[Dataflex][Lego] reorder uses selector={consumer}, score_step={selection_step}, "
+                f"metric={snapshot['metric'] or 'loss'}, ascending={snapshot['ascending'] if not fallback else True}, "
+                f"fallback={snapshot.get('reason')}; selector scores are reused in both sharing modes"
+            )
+
+            class _SelectorProvider:
+                is_dynamic = False
+                ascending = True if fallback else snapshot["ascending"]
+
+                def scores_for(self, positions, model=None, step_id=0):
+                    _, scores = board.selection_scores_for(consumer, positions, selection_step)
+                    if scores is None:
+                        # Random has no model score. Delta's baseline already
+                        # contains raw loss, so it needs no additional forward.
+                        return board.loss_scores(model, positions, step_id, consumer=consumer).tolist()
+                    return scores.tolist()
+
+                def describe(self):
+                    return f"selector_score({consumer}, step={selection_step})"
+
+            self.component._provider = _SelectorProvider()
+            return
         if getattr(self.component, "score_source", None) != "model_loss":
             return
         if getattr(self.component, "_provider", "missing") == "missing":
@@ -544,7 +611,7 @@ class ReorderStage(IndexStage):
             is_dynamic = True
 
             def describe(self):
-                return "scoreboard(loss)"
+                return "scoreboard(loss_full)"
 
             def scores_for(self, positions, model=None, step_id: int = 0):
                 return fn(positions, model=model, step_id=step_id)
@@ -573,6 +640,11 @@ class WeightStage(LossStage):
     """
 
     family = "weighter"
+
+    def __init__(self, component, name, **kwargs):
+        super().__init__(component, name, **kwargs)
+        if self.every != 1:
+            raise ValueError("Weight stages apply every batch; configure refresh_interval on the weighter")
 
     def weights(self, losses: torch.Tensor, ctx: PlanContext, model=None, inputs=None) -> Optional[torch.Tensor]:
         fn = getattr(self.component, "get_sample_weights", None)

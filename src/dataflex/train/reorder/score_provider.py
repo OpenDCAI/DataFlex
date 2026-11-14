@@ -32,6 +32,7 @@ import torch.distributed as dist
 from torch.utils.data import DataLoader, Dataset, default_collate
 from tqdm import tqdm
 
+from dataflex.train.data.loader import split_batch
 from dataflex.utils.logging import logger
 
 
@@ -298,7 +299,7 @@ class ModelLossScoreProvider(ScoreProvider):
                 idx = torch.tensor(idx, dtype=torch.long, device=self.accelerator.device)
             idx = idx.view(-1).to(dtype=torch.long)
 
-            inputs = {k: v for k, v in batch.items() if k != "idx"}
+            inputs, _ = split_batch(batch)
             with torch.no_grad():
                 outputs = model(**inputs)
                 per_sample = self._per_sample_loss(outputs, inputs)
@@ -432,7 +433,7 @@ class ModelPerplexityScoreProvider(ModelLossScoreProvider):
                 index = batch["idx"]
                 if not torch.is_tensor(index):
                     index = torch.tensor(index, dtype=torch.long, device=self.accelerator.device)
-                inputs = {key: value for key, value in batch.items() if key != "idx"}
+                inputs, _ = split_batch(batch)
                 with torch.no_grad():
                     nll = self._per_sample_loss(model(**inputs), inputs)
                 local_nll.append(nll)
@@ -499,6 +500,9 @@ def build_score_provider(
         **params: forwarded to the chosen provider.
     """
     source = (source or "precomputed").lower()
+
+    if source == "selector_score":
+        raise ValueError("selector_score requires an upstream selector in a LEGO pipeline")
 
     if source == "precomputed":
         return PrecomputedScoreProvider(

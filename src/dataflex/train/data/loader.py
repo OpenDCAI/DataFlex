@@ -1,10 +1,12 @@
 
 import json
 import os
+from collections.abc import Mapping
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, List, Literal, Optional, Union
 
 import numpy as np
+import torch
 from datasets import Dataset, DatasetDict, concatenate_datasets, load_dataset, load_from_disk
 from torch.utils.data import Dataset as TorchDataset
 
@@ -496,41 +498,102 @@ def make_reorder_get_dataset(reorder_factory):
 # ======================================================================
 
 
+SAMPLE_METADATA_KEYS = ("idx", "domain_id")
+# Some multimodal collators attach this bookkeeping field themselves.
+BATCH_METADATA_KEYS = (*SAMPLE_METADATA_KEYS, "__record_indices__")
+
+
+def split_batch(batch):
+    """Return shallow copies of model inputs and metadata, without a model-field allowlist.
+
+    Labels and all vision/audio fields remain model inputs. Tensor objects are
+    shared with the original batch; removing keys never mutates that batch.
+    """
+    return (
+        {key: value for key, value in batch.items() if key not in BATCH_METADATA_KEYS},
+        {key: value for key, value in batch.items() if key in BATCH_METADATA_KEYS},
+    )
+
+
+class MetadataCollator:
+    """Let the original collator handle modalities, then restore row metadata.
+
+    The wrapped collator must keep one output sequence per input row, in order.
+    This is the contract of the preprocessed PT/SFT collators used by LEGO;
+    collators which expand, pack or reorder rows here need a separate mapping.
+    Eval/anchor batches without training IDs are valid. Partially labelled
+    batches fail instead of silently misaligning IDs and model inputs.
+    """
+
+    def __init__(self, collator):
+        self.collator = collator
+
+    def __call__(self, features):
+        metadata = {}
+        for key in SAMPLE_METADATA_KEYS:
+            present = [key in feature for feature in features]
+            if any(present):
+                if not all(present):
+                    raise ValueError(f"Inconsistent {key} metadata within a batch")
+                metadata[key] = torch.tensor([feature[key] for feature in features], dtype=torch.long)
+        rows = [
+            {key: value for key, value in feature.items() if key not in SAMPLE_METADATA_KEYS} for feature in features
+        ]
+        batch = dict(self.collator(rows))
+        input_ids = batch.get("input_ids")
+        if metadata and input_ids is not None and len(input_ids) != len(features):
+            raise ValueError("LEGO collator changed the number of rows; sample IDs cannot be aligned")
+        batch.update(metadata)
+        return batch
+
+    def __getattr__(self, name):
+        # __dict__.get avoids recursion during unpickling in DataLoader workers.
+        collator = self.__dict__.get("collator")
+        if collator is None:
+            raise AttributeError(name)
+        try:
+            return getattr(collator, name)
+        except AttributeError:
+            # Hugging Face's RemoveColumnsCollator does not forward attributes.
+            delegate = getattr(collator, "data_collator", None)
+            if delegate is None:
+                raise
+            return getattr(delegate, name)
+
+
 class DomainLabeledDataset(TorchDataset):
-    """A single dataset that still knows which domain each row came from.
+    """Attach identity in the final, preprocessed training dataset's index space.
 
-    The mixture path represents a domain as its own dataset object, which forces
-    `train_dataset = None` and leaves selectors and reorders with nothing to
-    index into. Composition needs the opposite arrangement: one concatenated
-    dataset plus a label per row, so that "allocate a quota per domain" is index
-    arithmetic over groups and every other family keeps working unchanged.
-
-    `domain_id` is injected per item because DoReMi reads it in `compute_loss`
-    and ODM reads it to attribute its bandit reward.
+    Wrap once after concatenating domains, before Subset/sampling/reordering.
+    Repeated draws keep the same idx. These IDs identify processed rows (packed
+    sequences when packing is enabled), not raw records or content hashes, and
+    are only stable for the same processed dataset and domain order.
     """
 
     def __init__(self, dataset, domain_ids):
         self.dataset = dataset
         self.domain_ids = np.asarray(domain_ids, dtype=np.int64)
-        if len(self.domain_ids) != len(dataset):
-            raise ValueError(
-                f"domain_ids has {len(self.domain_ids)} entries but the dataset has {len(dataset)} rows"
-            )
+        if self.domain_ids.ndim != 1 or len(self.domain_ids) != len(dataset):
+            raise ValueError("domain_ids must be a one-dimensional label array aligned with the dataset")
 
     def __len__(self):
         return len(self.dataset)
 
     def __getitem__(self, idx):
+        idx = int(idx)
+        if idx < 0:
+            idx += len(self)
+        if idx < 0 or idx >= len(self):
+            raise IndexError(idx)
         item = self.dataset[idx]
-        if isinstance(item, dict):
-            return {**item, "domain_id": int(self.domain_ids[idx])}
-        return item
+        if not isinstance(item, Mapping):
+            raise TypeError("LEGO requires dataset rows to be mappings")
+        return {**item, "idx": idx, "domain_id": int(self.domain_ids[idx])}
 
     @property
     def column_names(self):
-        # Some LlamaFactory paths sniff this to decide whether to prune columns.
         names = getattr(self.dataset, "column_names", None)
-        return (list(names) + ["domain_id"]) if names else None
+        return list(dict.fromkeys([*names, *SAMPLE_METADATA_KEYS])) if names is not None else None
 
 
 def lego_get_dataset(
@@ -620,11 +683,10 @@ def lego_get_dataset(
         f"[Dataflex][Lego] domains in `dataset:` order (name, rows): {plan}; total={sum(sizes)}"
     )
 
-    # Only wrap when there is something to attribute; a single-domain run does
-    # not need the per-item dict copy.
-    if len(domain_names) > 1:
-        dataset_module["train_dataset"] = DomainLabeledDataset(dataset_module["train_dataset"], domain_ids)
-        logger.info_rank0("[Dataflex][Lego] train_dataset wrapped to carry domain_id per sample.")
+    # Assign IDs once in the concatenated, preprocessed index space, including
+    # single-domain runs. Subsequent Subset views must never renumber them.
+    dataset_module["train_dataset"] = DomainLabeledDataset(dataset_module["train_dataset"], domain_ids)
+    logger.info_rank0("[Dataflex][Lego] train_dataset wrapped to carry idx and domain_id per sample.")
 
     dataset_module["domain_ids"] = domain_ids
     dataset_module["domain_names"] = domain_names

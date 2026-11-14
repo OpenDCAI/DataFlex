@@ -14,16 +14,33 @@ recompute.
 
 import json
 import os
+import random
+import weakref
+from contextlib import contextmanager, nullcontext
 from typing import Callable, Dict, List, Optional, Sequence
 
 import numpy as np
 import torch
-import torch.distributed as dist
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
+from dataflex.train.data.loader import split_batch
 from dataflex.utils.logging import logger
 from dataflex.utils.loss_utils import per_sample_loss_from_outputs
+from dataflex.utils.multimodal_scoring import move_to_device, scoring_state
+from dataflex.utils.multimodal_scoring import strip_vision_tokens, vision_token_ids
+
+
+@contextmanager
+def _scoring_environment(model):
+    """Extra scoring must not advance the training/collator random streams."""
+    python_state, numpy_state = random.getstate(), np.random.get_state()
+    try:
+        with scoring_state(model):
+            yield
+    finally:
+        random.setstate(python_state)
+        np.random.set_state(numpy_state)
 
 
 class _IndexedDataset(Dataset):
@@ -44,7 +61,7 @@ class _IndexedDataset(Dataset):
         idx = self.indices[i] if self.indices is not None else i
         item = self.dataset[idx]
         if isinstance(item, dict):
-            return {"idx": idx, **item}
+            return {**item, "idx": idx}
         return {"idx": idx, "item": item}
 
 
@@ -61,6 +78,7 @@ class ScoreBoard:
         num_workers: int = 2,
         cache_dir: Optional[str] = None,
         seed: int = 42,
+        score_sharing: str = "shared",
     ):
         self.dataset = dataset
         self.accelerator = accelerator
@@ -70,6 +88,12 @@ class ScoreBoard:
         self.num_workers = int(num_workers)
         self.cache_dir = cache_dir
         self.seed = int(seed)
+        if score_sharing not in {"shared", "independent"}:
+            raise ValueError("score_sharing must be 'shared' or 'independent'")
+        if self.batch_size <= 0 or self.num_workers < 0:
+            raise ValueError("Scoring batch size must be positive and worker count nonnegative")
+        self.score_sharing = score_sharing
+        self._model_ref = None
 
         self._values: Dict[str, np.ndarray] = {}
         #: When each position was last scored, -1 for never. Per position rather
@@ -83,6 +107,115 @@ class ScoreBoard:
         #: cache. Exposed so a run can show that sharing is working.
         self.compute_calls: Dict[str, int] = {}
         self.cache_hits: Dict[str, int] = {}
+        # Selector outputs are algorithm state, not raw-loss compute caches.
+        # Reorder consumes them in BOTH shared and independent modes.
+        self.selection_scores = {}
+
+    @property
+    def scoring_contract(self):
+        return {
+            "version": 2,
+            "loss": "answer-token-mean-ce-fp32-eval",
+            "no_image": "delete-visual-tokens-v1",
+            "sharing": self.score_sharing,
+            "batch_size": self.batch_size,
+            "num_workers": self.num_workers,
+            "seed": self.seed,
+        }
+
+    def _loss_key(self, metric, consumer):
+        if metric not in {"loss_full", "loss_no_image"}:
+            raise ValueError(f"Unknown LEGO loss condition: {metric}")
+        if not consumer:
+            raise ValueError("A stable component identity is required for scoring")
+        return metric if self.score_sharing == "shared" else f"{consumer}::{metric}"
+
+    def _bind_model(self, model):
+        core = self.accelerator.unwrap_model(model) if self.accelerator is not None else model
+        if self._model_ref is not None and self._model_ref() is not core:
+            self._values.clear()
+            self._scored_at.clear()
+            self._step.clear()
+            self.selection_scores.clear()
+        self._model_ref = weakref.ref(core)
+        return core
+
+    def loss_scores(self, model, positions, step_id, *, consumer, metric="loss_full"):
+        """Exact current-step scores; namespaces isolate independent components.
+
+        Preprocessing must be deterministic. Refresh clocks and component-level
+        baselines/weights remain owned by the components, not this cache.
+        """
+        positions = list(positions)
+        if step_id < 0 or any(i < 0 or i >= self.dataset_size for i in positions):
+            raise ValueError("Invalid scoring step or global sample IDs")
+        self._bind_model(model)
+        key = self._loss_key(metric, consumer)
+
+        def compute(missing):
+            values = self._compute_losses(model, missing, step_id, metric=metric)
+            return [values[i] for i in missing]
+
+        return self.get(key, positions, step_id, compute, max_age=0, fill="nan", cache_invalid=True)
+
+    def put_selection_scores(self, consumer, payload):
+        indices = np.asarray(payload["indices"], dtype=np.int64)
+        scores = None if payload["scores"] is None else np.asarray(payload["scores"], dtype=np.float64)
+        if (indices.ndim != 1 or len(np.unique(indices)) != len(indices)
+                or (indices < 0).any() or (indices >= self.dataset_size).any()):
+            raise ValueError("Selector scores have invalid or duplicate sample IDs")
+        if scores is not None and (scores.shape != indices.shape or not np.isfinite(scores).all()):
+            raise ValueError("Selector scores must be finite and aligned with sample IDs")
+        if payload["step"] < 0 or payload["metric"] not in {None, "loss", "delta_loss"}:
+            raise ValueError("Invalid selector score step or metric")
+        if scores is not None and type(payload["ascending"]) is not bool:
+            raise ValueError("Selector score direction must be explicit")
+        if scores is None and (payload["metric"] is not None or payload.get("reason") != "random"):
+            raise ValueError("Only Random selection can publish no scores")
+        order = np.argsort(indices)
+        self.selection_scores[consumer] = {
+            **payload, "indices": indices[order].copy(),
+            "scores": None if scores is None else scores[order].copy(),
+        }
+
+    def selection_scores_for(self, consumer, positions, selection_step):
+        saved = self.selection_scores.get(consumer)
+        if saved is None or saved["step"] != selection_step:
+            raise ValueError("Missing selector scores for the active selection step")
+        positions = np.asarray(list(positions), dtype=np.int64)
+        ids = saved["indices"]
+        offsets = np.searchsorted(ids, positions)
+        if (offsets >= len(ids)).any() or not np.array_equal(ids[offsets], positions):
+            raise ValueError("Reorder candidate IDs are not covered by the selector scores")
+        return saved, None if saved["scores"] is None else saved["scores"][offsets].copy()
+
+    def state_dict(self):
+        return {
+            "contract": self.scoring_contract,
+            "values": self._values,
+            "scored_at": self._scored_at,
+            "step": self._step,
+            "compute_calls": self.compute_calls,
+            "cache_hits": self.cache_hits,
+            "selection_scores": self.selection_scores,
+        }
+
+    def load_state_dict(self, state):
+        if state.get("contract") != self.scoring_contract:
+            raise ValueError("ScoreBoard checkpoint scoring contract differs or is missing")
+        values = {k: np.asarray(v).copy() for k, v in state["values"].items()}
+        stamps = {k: np.asarray(v).copy() for k, v in state["scored_at"].items()}
+        if values.keys() != stamps.keys() or any(
+            v.shape != (self.dataset_size,) for table in (values, stamps) for v in table.values()
+        ):
+            raise ValueError("ScoreBoard checkpoint does not match the dataset")
+        self._values, self._scored_at = values, stamps
+        self._step = dict(state["step"])
+        self.compute_calls, self.cache_hits = dict(state["compute_calls"]), dict(state["cache_hits"])
+        self.selection_scores = {}
+        for consumer, payload in state.get("selection_scores", {}).items():
+            self.put_selection_scores(consumer, payload)
+        self._model_ref = None
 
     # ------------------------------------------------------------------
     # Cache protocol
@@ -123,6 +256,7 @@ class ScoreBoard:
         compute_fn: Optional[Callable[[Sequence[int]], Sequence[float]]] = None,
         max_age: Optional[int] = 0,
         fill: str = "median",
+        cache_invalid: bool = False,
     ) -> np.ndarray:
         """Return scores for `indices`, computing them only if necessary.
 
@@ -152,7 +286,9 @@ class ScoreBoard:
             # A position is usable when it holds a real number that is young
             # enough. Judging each position on its own stamp is what keeps a
             # partial fill from passing stale values off as fresh.
-            usable = (stamps[idx] >= 0) & ~np.isnan(cached[idx])
+            usable = (stamps[idx] >= 0) & (stamps[idx] <= step_id)
+            if not cache_invalid:
+                usable &= ~np.isnan(cached[idx])
             if max_age is not None:
                 usable &= (step_id - stamps[idx]) <= max_age
             stale = idx[~usable]
@@ -176,6 +312,7 @@ class ScoreBoard:
                 f"[Dataflex][Lego] computing '{metric}' for {len(to_compute)} positions "
                 f"(compute #{self.compute_calls[metric]} this run)"
             )
+            to_compute = sorted(set(to_compute))
             values = compute_fn(to_compute)
             self.put(metric, to_compute, values, step_id)
 
@@ -213,69 +350,60 @@ class ScoreBoard:
 
         return compute
 
-    def _compute_losses(self, model, positions: Sequence[int], step_id: int) -> Dict[int, float]:
+    def _compute_losses(self, model, positions: Sequence[int], step_id: int, metric="loss_full") -> Dict[int, float]:
         if model is None:
             raise ValueError("per-sample loss needs a model")
         if not positions:
             return {}
+        acc = self.accelerator
+        core = acc.unwrap_model(model) if acc is not None else model
+        device = acc.device if acc is not None else next(model.parameters()).device
+        # Local DataLoader RNG avoids advancing the Trainer's RNG even at
+        # iterator construction. scoring_state also restores model/rope state.
+        with _scoring_environment(model):
+            loader = DataLoader(
+                _IndexedDataset(self.dataset, positions),
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=self.num_workers,
+                collate_fn=self.data_collator,
+                generator=torch.Generator().manual_seed(self.seed + int(step_id)),
+            )
+            if acc is not None:
+                loader = acc.prepare(loader)
+            local_losses, local_indices = [], []
+            for batch in tqdm(
+                loader, desc=f"[Lego {metric} @ step {step_id}]",
+                disable=acc is not None and not acc.is_main_process, dynamic_ncols=True,
+            ):
+                batch = move_to_device(batch, device)
+                idx = torch.as_tensor(batch["idx"], dtype=torch.long, device=device).view(-1)
+                inputs, _ = split_batch(batch)
+                if metric == "loss_no_image":
+                    inputs = strip_vision_tokens(inputs, vision_token_ids(core.config))
+                labels = inputs.pop("labels")
+                with torch.no_grad(), acc.autocast() if acc is not None else nullcontext():
+                    outputs = model(**{**inputs, "use_cache": False})
+                    if getattr(outputs, "logits", None) is None:
+                        raise ValueError("LEGO scoring requires logits; a scalar batch loss is not a per-sample score")
+                    if outputs.logits.shape[:2] != labels.shape:
+                        raise ValueError("LEGO scoring requires logits aligned with response labels")
+                    per_sample = per_sample_loss_from_outputs(outputs, {"labels": labels})
+                local_losses.append(per_sample)
+                local_indices.append(idx)
 
-        was_training = model.training
-        model.eval()
-
-        loader = DataLoader(
-            _IndexedDataset(self.dataset, positions),
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-            collate_fn=self.data_collator,
-        )
-        loader = self.accelerator.prepare(loader)
-
-        local_losses, local_indices = [], []
-        for batch in tqdm(
-            loader,
-            desc=f"[Lego scoring @ step {step_id}]",
-            disable=not (self.accelerator is None or self.accelerator.is_main_process),
-            dynamic_ncols=True,
-        ):
-            idx = batch["idx"]
-            if not torch.is_tensor(idx):
-                idx = torch.tensor(idx, dtype=torch.long, device=self.accelerator.device)
-            idx = idx.view(-1).to(dtype=torch.long)
-
-            inputs = {k: v for k, v in batch.items() if k not in ("idx", "domain_id")}
-            with torch.no_grad():
-                outputs = model(**inputs)
-                per_sample = per_sample_loss_from_outputs(outputs, inputs)
-
-            local_losses.append(per_sample)
-            local_indices.append(idx)
-
-        if local_losses:
-            local_losses = torch.cat(local_losses, dim=0).float()
-            local_indices = torch.cat(local_indices, dim=0)
-        else:
-            device = self.accelerator.device if self.accelerator is not None else "cpu"
-            local_losses = torch.zeros(0, device=device)
-            local_indices = torch.zeros(0, dtype=torch.long, device=device)
-
-        if self.accelerator is not None:
-            all_losses = self.accelerator.gather(local_losses).detach().cpu().tolist()
-            all_indices = self.accelerator.gather(local_indices).detach().cpu().tolist()
-        else:
-            all_losses = local_losses.detach().cpu().tolist()
-            all_indices = local_indices.detach().cpu().tolist()
-
-        # Gathering pads the final batch, so an index can come back twice.
-        # First occurrence wins, which keeps this deterministic.
-        out: Dict[int, float] = {}
-        for value, i in zip(all_losses, all_indices):
-            if i not in out and np.isfinite(value):
-                out[int(i)] = float(value)
-
-        if was_training:
-            model.train()
-        return out
+            losses = torch.cat(local_losses).float() if local_losses else torch.zeros(0, device=device)
+            indices = torch.cat(local_indices) if local_indices else torch.zeros(0, dtype=torch.long, device=device)
+            if acc is not None:
+                losses, indices = acc.gather(losses), acc.gather(indices)
+            out = {}
+            for i, value in zip(indices.cpu().tolist(), losses.cpu().tolist()):
+                # Accelerate pads the tail; preserve the first occurrence,
+                # including NaN for samples with no supervised answer tokens.
+                out.setdefault(int(i), float(value))
+            if any(i not in out for i in positions):
+                raise RuntimeError("Distributed scoring did not return every requested sample ID")
+            return out
 
     # ------------------------------------------------------------------
     # Persistence, reusing the selector cache layout
@@ -304,6 +432,10 @@ class ScoreBoard:
             },
             "computed_at_step": {k: int(v) for k, v in self._step.items()},
         }
+        # Preserve the selector-cache convention for the one shared full-loss
+        # signal. Independent namespaces must not masquerade as a single cache.
+        if "loss_full" in payload["metric"]:
+            payload["metric"].setdefault("loss", payload["metric"]["loss_full"])
         os.makedirs(self.cache_dir, exist_ok=True)
         path = os.path.join(self.cache_dir, f"scoreboard_step_{step_id}.json")
         with open(path, "w", encoding="utf-8") as f:

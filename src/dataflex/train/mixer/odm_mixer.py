@@ -276,3 +276,65 @@ class ODMMixer(Mixer):
     def get_current_weights(self):
         """Get current domain weights."""
         return self.domain_weights.copy()
+
+    def state_dict(self):
+        """Export bandit state, including feedback pending the next mix call."""
+        return {
+            "version": 1,
+            "domain_names": list(self.mixture_manager.names),
+            "config": {
+                "alpha": self.alpha,
+                "warmup_steps": self.warmup_steps,
+                "reward_scale": self.reward_scale,
+                "min_exploration_rate": self.min_exploration_rate,
+            },
+            "initial_proportions": self.initial_proportions.copy(),
+            "domain_weights": self.domain_weights.copy(),
+            "estimated_rewards": self.estimated_rewards.copy(),
+            "exploration_rate": float(self.exploration_rate),
+            "prev_batch_info": None if self.prev_batch_info is None else dict(self.prev_batch_info),
+        }
+
+    def load_state_dict(self, state):
+        """Restore without consuming feedback or recomputing the policy."""
+        expected = self.state_dict()
+        if state.get("version") != 1:
+            raise ValueError("Unsupported ODM checkpoint schema")
+        if state.get("domain_names") != expected["domain_names"]:
+            raise ValueError("ODM checkpoint domain names/order differ")
+        if state.get("config") != expected["config"]:
+            raise ValueError("ODM checkpoint configuration differs")
+
+        def vector(name, probability=False):
+            value = np.asarray(state[name], dtype=np.float64).copy()
+            if value.shape != (self.k,) or not np.isfinite(value).all():
+                raise ValueError(f"Invalid ODM checkpoint {name}")
+            if probability and ((value < 0).any() or not np.isclose(value.sum(), 1.0)):
+                raise ValueError(f"Invalid ODM checkpoint {name}: expected probabilities")
+            return value
+
+        initial = vector("initial_proportions", probability=True)
+        if not np.array_equal(initial, self.initial_proportions):
+            raise ValueError("ODM checkpoint initial proportions differ")
+        weights = vector("domain_weights", probability=True)
+        rewards = vector("estimated_rewards")
+        exploration = float(state["exploration_rate"])
+        if not np.isfinite(exploration) or exploration < 0:
+            raise ValueError("Invalid ODM checkpoint exploration_rate")
+        pending = state["prev_batch_info"]
+        if pending is not None:
+            if not isinstance(pending, dict) or set(pending) != {"loss", "domain_id"}:
+                raise ValueError("Invalid ODM checkpoint prev_batch_info")
+            domain = pending["domain_id"]
+            if domain is not None and (type(domain) is not int or not 0 <= domain < self.k):
+                raise ValueError("Invalid ODM checkpoint feedback domain_id")
+            # Nonfinite loss is legal pending feedback: the existing reward
+            # update skips it. Preserve that behavior on resume too.
+            pending = {"loss": None if pending["loss"] is None else float(pending["loss"]), "domain_id": domain}
+
+        # Commit only after the complete state has passed validation.
+        self.initial_proportions = initial
+        self.domain_weights = weights
+        self.estimated_rewards = rewards
+        self.exploration_rate = exploration
+        self.prev_batch_info = pending

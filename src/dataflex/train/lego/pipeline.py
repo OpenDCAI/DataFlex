@@ -29,14 +29,13 @@ from .stages import (
 def _provides_sample_weights(component) -> bool:
     """Whether a weighter actually implements per-sample multipliers.
 
-    `Weighter.get_sample_weights` is defined on the abstract base and returns
-    None, so `hasattr` is true for every weighter and cannot tell "implemented"
-    from "inherited". Comparing against the base implementation can.
+    An absent method is scalar-only. If the base later gains a placeholder,
+    inheriting it still must not count as implementing sample weights.
     """
     from dataflex.train.weighter.base_weighter import Weighter
 
     own = getattr(type(component), "get_sample_weights", None)
-    return own is not None and own is not Weighter.get_sample_weights
+    return own is not None and own is not getattr(Weighter, "get_sample_weights", None)
 
 
 class SchedulePipeline:
@@ -60,6 +59,37 @@ class SchedulePipeline:
         self.save_plans = bool(save_plans)
 
         self._validate()
+        for i, stage in enumerate((*self.index_stages, *self.loss_stages)):
+            # Stable even when the same algorithm occurs twice in a pipeline.
+            stage.score_consumer = f"{i}:{stage.family}:{stage.name}"
+            if scoreboard is not None and (
+                isinstance(stage, SelectStage)
+                or (isinstance(stage, ReorderStage) and getattr(stage.component, "score_source", None) == "model_loss")
+                or stage.name in {"multimodal_loss", "multimodal_deltaloss"}
+            ):
+                stage.validate_score_options()
+
+        selector = None
+        for stage in self.index_stages:
+            if isinstance(stage, SelectStage):
+                selector = stage
+            if not isinstance(stage, ReorderStage) or getattr(stage.component, "score_source", None) != "selector_score":
+                continue
+            from dataflex.train.reorder.dynamic_reorder import DynamicReorder
+
+            if scoreboard is None or selector is None or selector.name not in {"loss", "delta_loss", "random"}:
+                raise ValueError("selector_score requires ScoreBoard and an upstream loss/delta_loss/random selector")
+            if type(stage.component) is not DynamicReorder or stage.component.reorder_every != 1:
+                raise ValueError("selector_score requires dynamic reorder with reorder_every: 1")
+            if stage.warmup_step < selector.warmup_step:
+                raise ValueError("selector_score reorder cannot start before its selector")
+            if selector.name == "loss" and selector.component.score_ascending is None:
+                raise ValueError("Loss focus=medium requires explicit score_ascending for selector_score reorder")
+            if stage.component.score_params.get("fallback") not in {None, "model_loss"}:
+                raise ValueError("selector_score fallback must be model_loss or omitted")
+            stage.validate_score_options()
+            selector.publish_selection_scores = True
+            stage.selection_stage = selector
 
         self._plan: Optional[DataPlan] = None
         #: What each index stage last handed downstream, one slot per stage, so a
@@ -115,6 +145,10 @@ class SchedulePipeline:
                 stage_runtime["cache_dir"] = os.path.join(cache_dir, f"{family}_{component_name}")
 
             component = cls._build_component(family, component_name, params, stage_runtime)
+            if family == "selector" and component_name in {"loss", "delta_loss"}:
+                # Step-only JSON caches cannot identify a model/run. LEGO resume
+                # restores its actual stage state instead of accepting those files.
+                component.reuse_selection_cache = False
 
             stage_cls = STAGE_TYPES[family]
             stage = stage_cls(component, component_name, **entry)
@@ -142,6 +176,18 @@ class SchedulePipeline:
     @staticmethod
     def _build_component(family: str, name: str, params: Dict[str, Any], runtime: Dict[str, Any]):
         """Instantiate a component the same way its dedicated trainer would."""
+        if family == "selector":
+            from dataflex.train.data.loader import DomainLabeledDataset
+
+            # The wrapper adds global IDs for training/weight lookup. Selectors
+            # already return positions, so give them the same rows without those
+            # extra fields. No subset or reindexing: candidate positions remain
+            # global. Their own IndexedDataset/collator bookkeeping stays intact.
+            runtime = dict(runtime)
+            dataset = runtime.get("dataset")
+            if isinstance(dataset, DomainLabeledDataset):
+                runtime["dataset"] = dataset.dataset
+
         if family == "reorder":
             from dataflex.train.reorder import resolve_reorder_kind
 
@@ -189,6 +235,19 @@ class SchedulePipeline:
             self.index_stages.sort(key=lambda s: rank.get(s.family, len(rank)))
 
         takers = [s for s in self.index_stages if s.takes_budget]
+        last = takers[-1] if takers else None
+        if isinstance(last, ReorderStage) and getattr(last.component, "pattern", None) == "folding":
+            # Each layer must span the members of the actual training interval.
+            takers.pop().takes_budget = False
+            for stage in takers.copy():
+                if isinstance(stage, MixStage) and stage.reweights_in_loss_space:
+                    stage.takes_budget = False
+                    takers.remove(stage)
+            if not takers:
+                take = _UniformTakeStage(warmup_step=last.warmup_step, every=last.every)
+                self.index_stages.insert(self.index_stages.index(last), take)
+                takers.append(take)
+
         if len(takers) > 1:
             # Only the last taker actually determines the interval, so the
             # earlier ones must not shrink it to the budget.
@@ -199,11 +258,11 @@ class SchedulePipeline:
                         f"takes the interval budget. Use mode: filter so it acts as a pool filter."
                     )
                 s.takes_budget = False
-            logger.info(
-                f"[Dataflex][Lego] {takers[-1].family}:{takers[-1].name} is the budget taker"
-            )
 
-        if not any(s.takes_budget for s in self.index_stages):
+        if takers:
+            taker = takers[-1]
+            logger.info(f"[Dataflex][Lego] {taker.family}:{taker.name} is the budget taker")
+        else:
             logger.info(
                 "[Dataflex][Lego] no configured stage takes the interval budget; "
                 "appending a uniform taker so the plan is always the right size"
@@ -223,6 +282,21 @@ class SchedulePipeline:
         index_part = " -> ".join(s.describe() for s in self.index_stages) or "(none)"
         loss_part = " x ".join(s.describe() for s in self.loss_stages) or "(none)"
         return f"index[{index_part}] loss[{loss_part}]"
+
+    def set_data_collator(self, data_collator) -> None:
+        """Use the Trainer's resolved collator for every scoring path as well."""
+        # MetadataCollator only restores fields present in its input rows.
+        # Selector rows have no LEGO IDs; indices added by selectors themselves
+        # are still preserved for their existing scoring/gather logic.
+        if self.scoreboard is not None:
+            self.scoreboard.data_collator = data_collator
+        for stage in (*self.index_stages, *self.loss_stages):
+            component = stage.component
+            setter = getattr(component, "set_data_collator", None)
+            if callable(setter):
+                setter(data_collator)
+            elif hasattr(component, "data_collator"):
+                component.data_collator = data_collator
 
     @property
     def has_reorder(self) -> bool:
@@ -265,6 +339,10 @@ class SchedulePipeline:
                 )
                 self._stage_out[i] = plan.indices
                 continue
+            if isinstance(stage, ReorderStage) and not stage.takes_budget and len(plan):
+                # Resolve short or oversized pools before Folding, including
+                # when the upstream mixer is still in warmup.
+                plan = self._enforce_budget(plan, ctx)
             plan = stage.apply(plan, ctx)
             stage.mark_run(ctx.step_id)
             self._stage_out[i] = plan.indices
@@ -350,6 +428,19 @@ class SchedulePipeline:
     def has_loss_stages(self, step_id: int) -> bool:
         return any(s.is_active(step_id) for s in self.loss_stages)
 
+    def prepare_loss_stages(self, ctx: PlanContext, model) -> None:
+        """Refresh before the differentiable training forward, never in evaluation."""
+        for stage in self.loss_stages:
+            if isinstance(stage, WeightStage) and stage.is_active(ctx.step_id):
+                setter = getattr(stage.component, "set_score_source", None)
+                if callable(setter):
+                    if ctx.scoreboard is not None and stage.component.dataset is not ctx.scoreboard.dataset:
+                        raise ValueError("LEGO weighter and ScoreBoard must reference the same global training dataset")
+                    setter(stage.board_score_fn(ctx))
+                prepare = getattr(stage.component, "prepare", None)
+                if callable(prepare):
+                    prepare(ctx, model)
+
     def weighted_loss(
         self,
         per_sample_losses: torch.Tensor,
@@ -431,8 +522,8 @@ class _UniformTakeStage(IndexStage):
     family = "take"
     takes_budget = True
 
-    def __init__(self):
-        super().__init__(component=None, name="uniform", warmup_step=0, every=1)
+    def __init__(self, warmup_step: int = 0, every: int = 1):
+        super().__init__(component=None, name="uniform", warmup_step=warmup_step, every=every)
 
     def apply(self, plan: DataPlan, ctx: PlanContext) -> DataPlan:
         pool = plan.indices if len(plan.indices) else np.arange(ctx.dataset_size, dtype=np.int64)

@@ -21,9 +21,11 @@ import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
+from dataflex.train.data.loader import split_batch
 from dataflex.core.registry import register_weighter
 from dataflex.utils.logging import logger
-from .base_weighter import Weighter
+from dataflex.utils.multimodal_scoring import strip_vision_tokens, vision_token_ids
+from .base_weighter import IndexedWeightLifecycle, Weighter
 
 IGNORE_INDEX = -100
 
@@ -59,7 +61,7 @@ class _PairedIndexedDataset(Dataset):
 
 
 @register_weighter("multimodal_deltaloss")
-class MultimodalDeltalossWeighter(Weighter):
+class MultimodalDeltalossWeighter(IndexedWeightLifecycle, Weighter):
     """多模态 DeltaLoss 重加权。"""
 
     def __init__(
@@ -101,22 +103,11 @@ class MultimodalDeltalossWeighter(Weighter):
 
     # ---- 训练入口 ----
 
-    def training_step(self, ctx, model, inputs, num_items_in_batch=None, use_weighter=False):
-        step = ctx.state.global_step
-        if use_weighter and step != self._last_refresh_step and \
-                (self.W is None or step % self.refresh_interval == 0):
-            self._refresh(ctx, model, step)
-            self._last_refresh_step = step
-        return super().training_step(ctx, model, inputs, num_items_in_batch, use_weighter)
-
     def get_weighted_loss(self, losses, *, ctx=None, model=None, inputs=None):
         if (not torch.is_tensor(losses)) or losses.dim() == 0:
             return losses
-        if not self._weight_map:
-            return losses.mean()
         losses = losses.view(-1)
-        w = torch.tensor([self._weight_map.get(k, 1.0) for k in _sample_keys(inputs)],
-                         dtype=losses.dtype, device=losses.device)
+        w = self._batch_weights(inputs, losses, _sample_keys)
         if self.loss_reduction == "token":
             n = (inputs["labels"][..., 1:] != IGNORE_INDEX).sum(dim=1).to(losses.dtype)
             return torch.sum(w * losses * n) / n.sum().clamp_min(1)
@@ -126,12 +117,17 @@ class MultimodalDeltalossWeighter(Weighter):
 
     @torch.no_grad()
     def _refresh(self, ctx, model, step):
+        loss_full = self._source_scores("loss_full")
+        if loss_full is not None:
+            loss_noimg = self._source_scores("loss_no_image")
+            score = loss_noimg - loss_full
+            self.W = self._score_to_weight(score)
+            self._weight_map = {}
+            self._log_and_save(step, score, loss_full, loss_noimg)
+            return
         acc = ctx.accelerator
         if self._vision_ids is None:
-            cfg = acc.unwrap_model(model).config
-            img_id = getattr(cfg, "image_token_id", None) or getattr(cfg, "image_token_index", None)
-            self._vision_ids = (getattr(cfg, "vision_start_token_id", None),
-                                getattr(cfg, "vision_end_token_id", None), img_id)
+            self._vision_ids = vision_token_ids(acc.unwrap_model(model).config)
 
         n = len(self.dataset)
         order = self._get_length_order()
@@ -155,14 +151,15 @@ class MultimodalDeltalossWeighter(Weighter):
             full_l.append(self._forward_loss(model, main))
             noimg_l.append(self._forward_loss(model, self._strip_vision(main)))
             idx_l.append(batch["idx"])
-            key_l.append(torch.frombuffer(bytearray(b"".join(_sample_keys(main))), dtype=torch.uint8)
-                         .view(-1, 16).to(acc.device))
+            if "idx" not in main:
+                key_l.append(torch.frombuffer(bytearray(b"".join(_sample_keys(main))), dtype=torch.uint8)
+                             .view(-1, 16).to(acc.device))
         if was_training:
             model.train()
         torch.cuda.empty_cache()
 
         all_idx = acc.gather(torch.cat(idx_l)).cpu()
-        all_keys = acc.gather(torch.cat(key_l)).cpu().numpy()
+        all_keys = acc.gather(torch.cat(key_l)).cpu().numpy() if key_l else None
         def _align(parts):
             vals = acc.gather(torch.cat(parts)).float().cpu()
             out = torch.full((n,), float("nan"))
@@ -174,13 +171,16 @@ class MultimodalDeltalossWeighter(Weighter):
         score = loss_noimg - loss_full  # delta: 加了图 loss 降得越多越高
 
         self.W = self._score_to_weight(score)
-        self._weight_map = {k.tobytes(): float(self.W[i]) for k, i in zip(all_keys, all_idx.tolist())}
+        self._weight_map = ({k.tobytes(): float(self.W[i]) for k, i in zip(all_keys, all_idx.tolist())}
+                            if all_keys is not None else {})
         self._log_and_save(step, score, loss_full, loss_noimg)
 
     # ---- 权重公式（内联） ----
 
     def _score_to_weight(self, score):
         valid = torch.isfinite(score)
+        if not valid.any():
+            raise ValueError("Cannot refresh weights: no finite answer-token losses")
         s = score.clone()
         lo = torch.quantile(s[valid], self.clip_quantile).item()
         hi = torch.quantile(s[valid], 1 - self.clip_quantile).item()
@@ -196,7 +196,8 @@ class MultimodalDeltalossWeighter(Weighter):
     # ---- 前向 ----
 
     def _forward_loss(self, model, batch):
-        inputs = {k: v for k, v in batch.items() if k != "labels"}
+        inputs, _ = split_batch(batch)
+        inputs.pop("labels", None)
         logits = model(**inputs, use_cache=False).logits
         return self._answer_loss(logits, batch["labels"])
 
@@ -215,41 +216,11 @@ class MultimodalDeltalossWeighter(Weighter):
     # ---- 去图 ----
 
     def _strip_vision(self, batch):
-        """删掉视觉 token，兼容 Qwen-VL（vision_start…end）和 LLaVA（image token id）。"""
-        vs, ve, img_id = self._vision_ids
-        ids, am, labels = batch["input_ids"], batch["attention_mask"], batch["labels"]
-        # 没有视觉 token 配置时直接返回原 batch（纯文本模型）
-        if vs is None and img_id is None:
-            return batch
-        rows = []
-        for i in range(ids.size(0)):
-            valid = am[i] != 0
-            r_ids, r_lab = ids[i][valid], labels[i][valid]
-            if vs is not None:  # Qwen-VL 类
-                s, e = (r_ids == vs).long(), (r_ids == ve).long()
-                inside = (s.cumsum(0) - e.cumsum(0) + e) > 0
-            else:  # LLaVA 类
-                inside = r_ids == img_id
-            rows.append((r_ids[~inside], r_lab[~inside]))
-        L = max(len(r[0]) for r in rows)
-        new_ids = ids.new_zeros((len(rows), L))
-        new_lab = labels.new_full((len(rows), L), IGNORE_INDEX)
-        new_am = am.new_zeros((len(rows), L))
-        for i, (r_ids, r_lab) in enumerate(rows):
-            n = len(r_ids)
-            new_ids[i, :n], new_lab[i, :n], new_am[i, :n] = r_ids, r_lab, 1
-        return {"input_ids": new_ids, "attention_mask": new_am, "labels": new_lab}
+        """Delete visual tokens, using the same condition as LEGO scoring."""
+        return strip_vision_tokens(batch, self._vision_ids)
 
     # ---- 工具 ----
 
-    def _get_length_order(self):
-        if self._order is None:
-            lens = self.dataset.map(
-                lambda b: {"_n": [len(x) for x in b["input_ids"]]},
-                batched=True, remove_columns=self.dataset.column_names, keep_in_memory=True,
-            )["_n"]
-            self._order = torch.tensor(lens).argsort(descending=True).tolist()
-        return self._order
 
     def _log_and_save(self, step, score, loss_full, loss_noimg):
         if not dist.is_initialized() or dist.get_rank() == 0:

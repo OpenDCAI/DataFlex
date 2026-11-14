@@ -182,6 +182,7 @@ selectors:
     params:
       cache_dir: ../dataflex_saves/loss_output
       focus: "medium"
+      score_ascending: true  # Medium focus has no inherent ordering direction.
       # Scoring is batch-invariant, so this only trades memory for speed.
       score_batch_size: 8
 
@@ -514,6 +515,43 @@ reorders:
       reorder_every: 1        # re-score every k update intervals
       consume_once: true      # remove the samples sent out to ensure single-round semantic
 
+  # Exact-loss version for LEGO shared/independent comparisons. The standalone
+  # dynamic_saw preset above retains its optional scoring approximation.
+  lego_selector_folding:
+    name: lego_selector_folding
+    params:
+      kind: dynamic
+      apply_at: index
+      pattern: folding
+      pattern_params:
+        layers: 2
+      score_source: selector_score
+      score_params:
+        fallback: model_loss  # Random / first DeltaLoss call: raw loss ascending.
+      reorder_every: 1
+      consume_once: true
+      seed: 42
+      window_size: 0
+
+  lego_dynamic_saw:
+    name: lego_dynamic_saw
+    params:
+      kind: dynamic
+      pattern: saw
+      apply_at: index
+      polarity: higher_later
+      ascending: true
+      window_size: 0
+      seed: 42
+      pattern_params:
+        num_sections: 3
+        folding_ratio: 0.075
+        layers: 2
+      score_source: model_loss
+      score_params: {}  # Batch/workers come from the pipeline; no max_samples.
+      reorder_every: 1
+      consume_once: true
+
   dynamic_folding:
     name: dynamic_folding
     params:
@@ -561,6 +599,11 @@ pipelines:
   #   every       : how many optimizer steps to recalculate
   #   enabled     : false skips a stage, i.e. "leave that brick out"
   #
+  # params.score_sharing: shared (default) | independent
+  # Both use exact current-step answer loss and pipeline-level score_batch_size /
+  # score_num_workers. independent isolates each component's score cache.
+  # Do not set score_max_age > 0 or score_params.max_samples in loss consumers.
+  #
   # Two hard rules (pipeline checks them, not relying on YAML):
   #   1. The order of index space is semantically fixed as select -> mix -> reorder.
   #      Writing it in another order is corrected automatically, with a warning.
@@ -580,6 +623,7 @@ pipelines:
     params:
       cache_dir: ../dataflex_saves/lego_output
       score_batch_size: 8      # shared scoring batch size
+      score_sharing: shared   # independent disables cross-component reuse
       save_plans: false        # true will save the scoreboard for each round
       stages:
         # Step 1: coarse-grained filter, remove redundant data and reduce the scoring overhead of subsequent stages
@@ -595,7 +639,7 @@ pipelines:
           every: 50
         # Step 2.5: domain-internal/overall order
         - family: reorder
-          component: dynamic_saw
+          component: lego_dynamic_saw
           every: 50
         # Step 3: sample-level reweighting
         - family: weighter
@@ -607,6 +651,7 @@ pipelines:
     name: select_then_reorder
     params:
       cache_dir: ../dataflex_saves/lego_output
+      score_sharing: shared
       stages:
         - family: selector
           component: loss
@@ -615,8 +660,32 @@ pipelines:
           warmup_step: 10
           every: 100
         - family: reorder
-          component: dynamic_saw
+          component: lego_dynamic_saw
           every: 20
+
+  # Online image-text composition. Select this preset in a dynamic_lego run
+  # with a VLM and processed image-text data; the existing standalone component
+  # formulas and refresh schedules are reused. selector_score always reuses
+  # the selector output, including in independent raw-loss scoring mode.
+  multimodal_lego:
+    name: multimodal_lego
+    params:
+      score_sharing: shared
+      score_batch_size: 8
+      score_num_workers: 2
+      stages:
+        - family: selector
+          component: loss          # alternatives: delta_loss, random
+          mode: filter
+          keep_ratio: 0.5
+          every: 244
+        - family: mixer
+          component: static        # configure proportions for your domains; or random/odm
+        - family: reorder
+          component: lego_selector_folding
+          every: 244
+        - family: weighter
+          component: multimodal_deltaloss  # or multimodal_loss / multimodal_adapt
 
   # Domain-level proportions + sample-level reweighting: two different levels of weighting stacked together.
   # If the mixer is doremi, it will also register as a contributor to the loss space, so here it is "domain weight x sample weight" multiplication, not mutually exclusive.

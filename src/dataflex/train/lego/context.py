@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 
+
 __all__ = ["PlanContext"]
 
 
@@ -65,6 +66,34 @@ class PlanContext:
     #: reference a later pool of the same length could collide with the entry and
     #: silently receive another pool's grouping.
     _group_cache_pool: Optional[Any] = None
+
+    #: Keep the selector's tokenizer available without exposing the full Trainer.
+    tokenizer: Any = None
+
+    @classmethod
+    def from_trainer(cls, trainer, *, model=None, batch=None, **overrides) -> "PlanContext":
+        """Snapshot the runtime shared by standalone and LEGO components.
+
+        Components read step_id and accelerator.device/is_main_process. This
+        is not a Trainer replacement: backward/optimizer operations still
+        belong to the Trainer. Explicit overrides describe planning boundaries.
+        """
+        dataset = trainer.train_dataset
+        values = dict(
+            dataset=dataset,
+            dataset_size=len(dataset) if dataset is not None else 0,
+            domain_ids=getattr(trainer, "domain_ids", None),
+            domain_names=getattr(trainer, "domain_names", None),
+            model=model if model is not None else trainer.model,
+            accelerator=trainer.accelerator,
+            data_collator=trainer.data_collator,
+            tokenizer=getattr(trainer, "processing_class", None),
+            step_id=trainer.state.global_step,
+            update_times=getattr(getattr(trainer, "finetuning_args", None), "update_times", 1),
+            batch=batch,
+        )
+        values.update(overrides)
+        return cls(**values)
 
     def domain_pool(self, domain: int, pool: Optional[Sequence[int]] = None) -> np.ndarray:
         """Indices belonging to `domain`, optionally restricted to `pool`.
@@ -136,4 +165,5 @@ class PlanContext:
             domain_ids=self.domain_ids,
             data_collator=self.data_collator,
             dataset=self.dataset,
+            tokenizer=self.tokenizer,
         )

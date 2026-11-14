@@ -1,0 +1,94 @@
+# Multimodal LEGO components. Set domain proportions and schedules for your run.
+# Use train_type: dynamic_lego and component_name: multimodal_lego.
+selectors:
+  loss:
+    params:
+      focus: medium
+      score_ascending: true  # Explicit direction for medium focus; low/high infer it.
+      score_batch_size: 1
+  delta_loss:
+    params:
+      window_size: 0.2
+      score_batch_size: 1
+  adapt_inf:
+    params:
+      num_clusters: 10
+      cluster_grid: [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
+      proj_dim: 8192
+      parameter_pattern: '\.layers\.16\..*lora_'  # Scoring gradients: layer index 16 LoRA parameters.
+      projection_seed: 0
+      histogram_bins: 50
+      seed: 42
+mixers:
+  static:
+    params:
+      proportions: [0.5, 0.5]  # Example for two domains, in training dataset order.
+  random:
+    params:
+      seed: 42
+  odm:
+    params:
+      alpha: 0.9
+      warmup_steps: 2000  # Set for your training budget; ODM feedback semantics are unchanged.
+      reward_scale: 15.0
+      min_exploration_rate: 0.03
+      initial_proportions: [0.5, 0.5]
+reorders:
+  lego_selector_folding:
+    params:
+      kind: dynamic
+      apply_at: index
+      pattern: folding
+      pattern_params:
+        layers: 2
+      score_source: selector_score
+      score_params:
+        fallback: model_loss  # Random / first DeltaLoss call: raw loss ascending.
+      reorder_every: 1
+      consume_once: true
+      seed: 42
+      window_size: 0
+weighters:
+  multimodal_loss:
+    params:
+      refresh_interval: 244
+      delta: 1.0
+      score_batch_size: 1
+      score_num_workers: 0
+      loss_reduction: token
+  multimodal_deltaloss:
+    params:
+      refresh_interval: 244
+      delta: 1.0
+      score_batch_size: 1
+      score_num_workers: 0
+      loss_reduction: token
+  multimodal_adapt:
+    params:
+      refresh_interval: 50
+      anchor_batch_size: 1
+      tau: 1.0
+      pool: all
+      weight_norm: mean1
+      clip: null
+
+pipelines:
+  multimodal_lego:
+    params:
+      score_sharing: shared  # selector_score reuses selection in both modes; this switch controls raw-loss caches.
+      score_batch_size: 1
+      score_num_workers: 0
+      seed: 42
+      stages:
+        - family: selector
+          component: loss
+          mode: filter
+          keep_ratio: 0.5
+          every: 244
+        - family: mixer
+          component: static
+        - family: reorder
+          component: lego_selector_folding
+          every: 244
+        - family: weighter
+          component: multimodal_loss
