@@ -237,10 +237,16 @@ class SchedulePipeline:
         takers = [s for s in self.index_stages if s.takes_budget]
         last = takers[-1] if takers else None
         if isinstance(last, ReorderStage) and getattr(last.component, "pattern", None) == "folding":
-            if any(isinstance(s, MixStage) and not s.reweights_in_loss_space for s in takers[:-1]):
-                # Draw the mixer quotas before Folding so each layer spans
-                # the samples that will actually be trained this interval.
-                takers.pop().takes_budget = False
+            # Each layer must span the members of the actual training interval.
+            takers.pop().takes_budget = False
+            for stage in takers.copy():
+                if isinstance(stage, MixStage) and stage.reweights_in_loss_space:
+                    stage.takes_budget = False
+                    takers.remove(stage)
+            if not takers:
+                take = _UniformTakeStage(warmup_step=last.warmup_step, every=last.every)
+                self.index_stages.insert(self.index_stages.index(last), take)
+                takers.append(take)
 
         if len(takers) > 1:
             # Only the last taker actually determines the interval, so the
@@ -516,8 +522,8 @@ class _UniformTakeStage(IndexStage):
     family = "take"
     takes_budget = True
 
-    def __init__(self):
-        super().__init__(component=None, name="uniform", warmup_step=0, every=1)
+    def __init__(self, warmup_step: int = 0, every: int = 1):
+        super().__init__(component=None, name="uniform", warmup_step=warmup_step, every=every)
 
     def apply(self, plan: DataPlan, ctx: PlanContext) -> DataPlan:
         pool = plan.indices if len(plan.indices) else np.arange(ctx.dataset_size, dtype=np.int64)
